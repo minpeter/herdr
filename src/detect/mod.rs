@@ -62,10 +62,11 @@ pub enum Agent {
     Kilo,
     Qodercli,
     Maki,
+    Senpi,
 }
 
 impl Agent {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Pi,
         Self::Claude,
         Self::Codex,
@@ -87,9 +88,10 @@ impl Agent {
         Self::Kilo,
         Self::Qodercli,
         Self::Maki,
+        Self::Senpi,
     ];
 
-    pub const SCREEN_MANIFEST_AGENTS: [Self; 19] = [
+    pub const SCREEN_MANIFEST_AGENTS: [Self; 20] = [
         Self::Pi,
         Self::Claude,
         Self::Codex,
@@ -109,6 +111,7 @@ impl Agent {
         Self::Kilo,
         Self::Qodercli,
         Self::Maki,
+        Self::Senpi,
     ];
 }
 
@@ -135,6 +138,7 @@ pub fn agent_label(agent: Agent) -> &'static str {
         Agent::Kilo => "kilo",
         Agent::Qodercli => "qodercli",
         Agent::Maki => "maki",
+        Agent::Senpi => "senpi",
     }
 }
 
@@ -161,6 +165,7 @@ pub fn interactive_agent_executable(agent: Agent) -> &'static str {
         Agent::Kilo => "kilo",
         Agent::Qodercli => "qodercli",
         Agent::Maki => "maki",
+        Agent::Senpi => "senpi",
     }
 }
 
@@ -197,6 +202,7 @@ fn lookup_agent(name: &str) -> Option<Agent> {
         "kilo" | "kilo-code" | "kilo code" => Some(Agent::Kilo),
         "qodercli" | "qoderclicn" | "qoder" | "qodercn" => Some(Agent::Qodercli),
         "maki" => Some(Agent::Maki),
+        "senpi" | "omo-senpi" | "omo-native" => Some(Agent::Senpi),
         _ => None,
     }
 }
@@ -544,6 +550,25 @@ fn agent_name_from_known_package_path(path: &str) -> Option<String> {
         {
             return Some(agent_label(Agent::Pi).to_string());
         }
+        if window
+            == [
+                "node_modules",
+                "@code-yeongyu",
+                "senpi",
+                "dist",
+                "cli",
+            ]
+            || window
+                == [
+                    "node_modules",
+                    "@code-yeongyu",
+                    "senpi",
+                    "dist",
+                    "cli-main",
+                ]
+        {
+            return Some(agent_label(Agent::Senpi).to_string());
+        }
     }
     None
 }
@@ -699,6 +724,7 @@ mod tests {
         assert_eq!(identify_agent("kilo"), Some(Agent::Kilo));
         assert_eq!(identify_agent("kilo-code"), Some(Agent::Kilo));
         assert_eq!(identify_agent("maki"), Some(Agent::Maki));
+        assert_eq!(identify_agent("senpi"), Some(Agent::Senpi));
     }
 
     #[test]
@@ -724,6 +750,8 @@ mod tests {
         assert_eq!(parse_agent_label("grok-build"), Some(Agent::Grok));
         assert_eq!(parse_agent_label("hermes-agent"), Some(Agent::Hermes));
         assert_eq!(parse_agent_label("maki"), Some(Agent::Maki));
+        assert_eq!(parse_agent_label("senpi"), Some(Agent::Senpi));
+        assert_eq!(parse_agent_label("omo-native"), Some(Agent::Senpi));
         assert_eq!(parse_agent_label("kilo-code"), Some(Agent::Kilo));
     }
 
@@ -760,6 +788,7 @@ mod tests {
             (Agent::Kilo, "kilo"),
             (Agent::Qodercli, "qodercli"),
             (Agent::Maki, "maki"),
+            (Agent::Senpi, "senpi"),
         ];
         assert_eq!(expected.len(), Agent::ALL.len());
         for (agent, executable) in expected {
@@ -969,6 +998,28 @@ mod tests {
             Some((Agent::Pi, "pi".to_string()))
         );
     }
+
+
+    #[test]
+    fn identify_agent_in_job_detects_node_wrapped_senpi_package_cli() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 42,
+            processes: vec![foreground_process(
+                42,
+                "node",
+                &[
+                    "node",
+                    "C:\\Users\\herdr\\AppData\\Roaming\\npm\\node_modules\\@code-yeongyu\\senpi\\dist\\cli.js",
+                ],
+            )],
+        };
+
+        assert_eq!(
+            identify_agent_in_job(&job),
+            Some((Agent::Senpi, "senpi".to_string()))
+        );
+    }
+
 
     #[test]
     fn identify_agent_in_job_ignores_non_cli_pi_package_script() {
