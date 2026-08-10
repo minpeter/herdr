@@ -896,6 +896,124 @@ fn senpi_interrupt_suffix_working() {
 }
 
 #[test]
+fn senpi_compacting_context_spinner_is_working() {
+    let screen =
+        "TPS 44.9 tok/s. Cache hit 86.6%, 313.4s\n  ⠙ Compacting context... (esc to cancel)\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/clawroid/bori\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - bori", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("compacting_context_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn senpi_compacting_short_label_with_stale_tail_is_working() {
+    let screen =
+        "Queued message for after compaction\n\
+        Steering: 음 그렇군\n\
+          ⠦ Compacting... (esc to cancel) ent benchmark implementation - Registered active HEAVY goal\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/minpeter/pss-runtime\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - pss-runtime", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("compacting_context_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn senpi_compacting_wrapped_stale_tail_is_working() {
+    let screen = "  ⠦ Compacting... (esc to cancel) ent benchmark imple\n\
+        mentation\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/minpeter/pss-runtime\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - pss-runtime", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("compacting_context_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn senpi_compacting_context_prose_does_not_trigger_working() {
+    let screen = "────────────────────────────────────────────────\n\
+        ❯ Goal: detect `Compacting context... (esc to cancel)` as working.\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/clawroid/bori\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - bori", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn senpi_pasted_short_compaction_row_does_not_trigger_working() {
+    let screen = "────────────────────────────────────────────────\n\
+        ❯ Pasted status:\n\
+          ⠦ Compacting... (esc to cancel) ent benchmark implementation\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/minpeter/pss-runtime\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - pss-runtime", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn senpi_active_subagent_row_is_working() {
+    let screen = "Todo\n\
+        감사\n\
+        [•] Run independent final review workstreams\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+         ⠏ Oracle이 최종 commit의 목표·byte-parity 제약 검증 · agent:oracle(openai-codex/gpt-5.6-sol:xhigh) · turn 11 (60 tools) · $1.0453 · 44 tok/s · running · 3m 14s\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/minpeter/ai-sdk-tool-call-middleware\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - middleware", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("active_subagent_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn senpi_pasted_subagent_row_does_not_trigger_working() {
+    let screen =
+        "Pasted status:\n ⠏ Oracle review · agent:oracle(openai-codex/gpt-5.6-sol:xhigh) · running · 3m 14s\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com/minpeter/ai-sdk-tool-call-middleware\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - middleware", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_working);
+}
+
+#[test]
 fn senpi_permission_prompt_blocked() {
     let screen = "Permission required for bash\n\
         Allow once\n\
