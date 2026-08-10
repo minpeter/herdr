@@ -556,22 +556,8 @@ fn agent_name_from_known_package_path(path: &str) -> Option<String> {
         {
             return Some(agent_label(Agent::Pi).to_string());
         }
-        if window
-            == [
-                "node_modules",
-                "@code-yeongyu",
-                "senpi",
-                "dist",
-                "cli",
-            ]
-            || window
-                == [
-                    "node_modules",
-                    "@code-yeongyu",
-                    "senpi",
-                    "dist",
-                    "cli-main",
-                ]
+        if window == ["node_modules", "@code-yeongyu", "senpi", "dist", "cli"]
+            || window == ["node_modules", "@code-yeongyu", "senpi", "dist", "cli-main"]
         {
             return Some(agent_label(Agent::Senpi).to_string());
         }
@@ -690,7 +676,6 @@ mod tests {
         );
         std::env::temp_dir().join(unique)
     }
-
     #[test]
     fn moved_agent_detection_routes_through_production_dispatch() {
         let detection = detect_agent(Some(Agent::Pi), "Working...");
@@ -1017,7 +1002,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn identify_agent_in_job_detects_node_wrapped_senpi_package_cli() {
         let job = crate::platform::ForegroundJob {
@@ -1037,7 +1021,6 @@ mod tests {
             Some((Agent::Senpi, "senpi".to_string()))
         );
     }
-
 
     #[test]
     fn identify_agent_in_job_detects_node_wrapped_mastracode_package_cli() {
