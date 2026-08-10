@@ -1,7 +1,7 @@
 id = "senpi"
-version = "2026.08.08.1"
+version = "2026.08.11.3"
 min_engine_version = 1
-updated_at = "2026-08-08T00:00:00Z"
+updated_at = "2026-08-11T00:00:00Z"
 aliases = ["omo-senpi", "omo-native"]
 
 # Senpi (npm @code-yeongyu/senpi) is the OmO Native coding-agent CLI —
@@ -9,6 +9,11 @@ aliases = ["omo-senpi", "omo-native"]
 #
 # Working chrome (live herdr detection buffer, senpi 2026.8.7):
 #   "• Working (4m 27s • esc to interrupt)"
+# Context compaction uses a braille spinner and may leave overwritten text:
+#   "  ⠙ Compacting context... (esc to cancel)"
+#   "  ⠦ Compacting... (esc to cancel) ent benchmark implementation"
+# Active subagents render below the prompt box:
+#   " ⠏ Oracle review · agent:oracle(...) · turn 11 (...) · running · 3m 14s"
 # Default message is "Working"; tool runs replace the label but keep the
 # "(elapsed • <key> to interrupt)" suffix. Permission prompts show
 # "Allow once" / "Allow always" / "Deny". Idle shows a bordered prompt
@@ -21,6 +26,22 @@ priority = 980
 region = "whole_recent"
 visible_blocker = true
 contains = ["Allow once", "Allow always", "Deny"]
+
+[[rules]]
+id = "compacting_context_working"
+state = "working"
+priority = 910
+region = "above_prompt_box"
+visible_working = true
+regex = ['(?m)^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Compacting(?: context)?(?:\.\.\.|…) \(esc to cancel\)(?:[ \t]+[^\n]*)?(?:\n[^\n]*){0,3}\z']
+
+[[rules]]
+id = "active_subagent_working"
+state = "working"
+priority = 905
+region = "after_last_horizontal_rule"
+visible_working = true
+line_regex = ['^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ · (?:agent|category):.+ · running ·(?: .*)?[ \t]*$']
 
 [[rules]]
 id = "interrupt_suffix_working"
