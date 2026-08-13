@@ -361,10 +361,6 @@ impl TerminalRuntime {
         self.0.agent_osc_progress()
     }
 
-    pub fn recent_text(&self, lines: usize) -> String {
-        self.0.recent_text(lines)
-    }
-
     pub(crate) fn recent_text_snapshot(&self, lines: usize) -> crate::pane::TerminalReadSnapshot {
         self.0.recent_text_snapshot(lines)
     }

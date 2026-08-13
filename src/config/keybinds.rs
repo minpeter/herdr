@@ -1437,8 +1437,8 @@ fn shifted_char_matches_expected(
     let KeyCode::Char(expected) = expected_code else {
         return false;
     };
-    if shifted_codepoint.and_then(char::from_u32) == Some(expected) {
-        return true;
+    if let Some(shifted) = shifted_codepoint.and_then(char::from_u32) {
+        return shifted == expected;
     }
     matches!(actual_code, KeyCode::Char(actual) if actual == expected && is_shifted_punctuation(expected))
 }
