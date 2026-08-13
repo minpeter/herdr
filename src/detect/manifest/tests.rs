@@ -928,3 +928,43 @@ fn codex_osc_working_beats_weak_blocker_screen() {
         Some("osc_title_working")
     );
 }
+
+#[test]
+fn senpi_interrupt_suffix_working() {
+    let screen = "• Working (4m 27s • esc to interrupt)\n\
+        Tip: Open the model selector with ctrl+l\n\
+        ❯\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - github.com", "");
+
+    assert_eq!(result.state, AgentState::Working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|r| r.id.as_str()),
+        Some("interrupt_suffix_working")
+    );
+    assert!(result.visible_working);
+}
+
+#[test]
+fn senpi_permission_prompt_blocked() {
+    let screen = "Permission required for bash\n\
+        Allow once\n\
+        Allow always\n\
+        Deny\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi", "");
+
+    assert_eq!(result.state, AgentState::Blocked);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|r| r.id.as_str()),
+        Some("permission_prompt_blocked")
+    );
+    assert!(result.visible_blocker);
+}
+
+#[test]
+fn senpi_idle_fallback_when_no_rules_match() {
+    let screen = "❯\n\
+        (🏴‍☠️ OmO Native) • ~/github.com\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - github.com", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+}

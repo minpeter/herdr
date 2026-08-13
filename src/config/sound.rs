@@ -142,6 +142,7 @@ impl AgentSoundOverrides {
             Some(Agent::Qodercli) => self.qodercli,
             Some(Agent::Qwen) => self.qwen,
             Some(Agent::Maki) => self.maki,
+            Some(Agent::Senpi) => AgentSoundSetting::Default,
             None => AgentSoundSetting::Default,
         }
     }

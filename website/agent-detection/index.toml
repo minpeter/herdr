@@ -73,6 +73,10 @@ id = "qodercli"
 path = "qodercli.toml"
 
 [[agents]]
+id = "senpi"
+path = "senpi.toml"
+
+[[agents]]
 id = "qwen"
 path = "qwen.toml"
 
