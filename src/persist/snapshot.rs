@@ -333,7 +333,7 @@ fn capture_tab(
                     terminal.agent_name.clone(),
                     terminal
                         .managed_agent_kind()
-                        .map(|agent| crate::detect::agent_label(agent).to_string()),
+                        .map(|agent| crate::detect::agent_manifest_id(agent).to_string()),
                 )
             })
             .unwrap_or_default();
@@ -572,7 +572,7 @@ mod tests {
             .unwrap()
             .begin_managed_agent(
                 "reviewer".into(),
-                crate::detect::Agent::Pi,
+                crate::detect::Agent::Senpi,
                 now,
                 std::time::Duration::ZERO,
                 std::time::Duration::from_secs(1),
@@ -585,14 +585,14 @@ mod tests {
 
         let terminal = state.terminals.get_mut(&terminal_id).unwrap();
         terminal.set_detected_state(
-            Some(crate::detect::Agent::Pi),
+            Some(crate::detect::Agent::Senpi),
             crate::detect::AgentState::Idle,
         );
         assert!(terminal.reconcile_managed_agent_at(now, false));
         let active = capture_from_state(&state);
         let active_pane = &active.workspaces[0].tabs[0].panes[&root.raw()];
         assert_eq!(active_pane.agent_name.as_deref(), Some("reviewer"));
-        assert_eq!(active_pane.managed_agent_kind.as_deref(), Some("pi"));
+        assert_eq!(active_pane.managed_agent_kind.as_deref(), Some("senpi"));
     }
 
     #[test]

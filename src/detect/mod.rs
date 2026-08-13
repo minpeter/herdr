@@ -142,7 +142,14 @@ pub fn agent_label(agent: Agent) -> &'static str {
         Agent::Qodercli => "qodercli",
         Agent::Qwen => "qwen",
         Agent::Maki => "maki",
+        Agent::Senpi => "omo",
+    }
+}
+
+pub(crate) fn agent_manifest_id(agent: Agent) -> &'static str {
+    match agent {
         Agent::Senpi => "senpi",
+        _ => agent_label(agent),
     }
 }
 
@@ -190,6 +197,11 @@ pub(crate) fn parse_canonical_agent_label(label: &str) -> Option<Agent> {
     (agent_label(agent) == label).then_some(agent)
 }
 
+pub(crate) fn parse_persisted_agent_label(label: &str) -> Option<Agent> {
+    let agent = lookup_agent(label)?;
+    (agent_label(agent) == label || agent_manifest_id(agent) == label).then_some(agent)
+}
+
 fn lookup_agent(name: &str) -> Option<Agent> {
     match name {
         "pi" => Some(Agent::Pi),
@@ -214,7 +226,7 @@ fn lookup_agent(name: &str) -> Option<Agent> {
         "qodercli" | "qoderclicn" | "qoder" | "qodercn" => Some(Agent::Qodercli),
         "qwen" | "qwen-code" | "qwen code" => Some(Agent::Qwen),
         "maki" => Some(Agent::Maki),
-        "senpi" | "omo-senpi" | "omo-native" => Some(Agent::Senpi),
+        "senpi" | "omo" | "omo-senpi" | "omo-native" => Some(Agent::Senpi),
         _ => None,
     }
 }
@@ -777,6 +789,20 @@ mod tests {
         assert_eq!(identify_agent("Qwen Code"), Some(Agent::Qwen));
         assert_eq!(identify_agent("maki"), Some(Agent::Maki));
         assert_eq!(identify_agent("senpi"), Some(Agent::Senpi));
+        assert_eq!(identify_agent("omo"), Some(Agent::Senpi));
+    }
+
+    #[test]
+    fn senpi_and_omo_share_omo_canonical_identity() {
+        assert_eq!(parse_agent_label("senpi"), Some(Agent::Senpi));
+        assert_eq!(parse_agent_label("omo"), Some(Agent::Senpi));
+        assert_eq!(agent_label(Agent::Senpi), "omo");
+        assert_eq!(agent_manifest_id(Agent::Senpi), "senpi");
+        assert_eq!(interactive_agent_executable(Agent::Senpi), "senpi");
+        assert_eq!(parse_canonical_agent_label("senpi"), None);
+        assert_eq!(parse_canonical_agent_label("omo"), Some(Agent::Senpi));
+        assert_eq!(parse_persisted_agent_label("senpi"), Some(Agent::Senpi));
+        assert_eq!(parse_persisted_agent_label("omo"), Some(Agent::Senpi));
     }
 
     #[test]
@@ -804,6 +830,7 @@ mod tests {
         assert_eq!(parse_agent_label("qwen-code"), Some(Agent::Qwen));
         assert_eq!(parse_agent_label("maki"), Some(Agent::Maki));
         assert_eq!(parse_agent_label("senpi"), Some(Agent::Senpi));
+        assert_eq!(parse_agent_label("omo"), Some(Agent::Senpi));
         assert_eq!(parse_agent_label("omo-native"), Some(Agent::Senpi));
         assert_eq!(parse_agent_label("kilo-code"), Some(Agent::Kilo));
     }
@@ -1154,7 +1181,7 @@ mod tests {
 
         assert_eq!(
             identify_agent_in_job(&job),
-            Some((Agent::Senpi, "senpi".to_string()))
+            Some((Agent::Senpi, "omo".to_string()))
         );
     }
 

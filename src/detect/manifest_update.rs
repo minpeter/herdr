@@ -10,7 +10,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use super::{agent_label, parse_agent_label, Agent};
+use super::{agent_label, agent_manifest_id, parse_agent_label, Agent};
 
 pub(crate) const MANIFEST_ENGINE_VERSION: u32 = 3;
 const DEFAULT_CATALOG_URL: &str = "https://herdr.dev/agent-detection/index.toml";
@@ -131,7 +131,7 @@ pub(crate) struct ManifestUpdateStatus {
 
 impl ManifestUpdateStatus {
     pub(crate) fn agent_status(&self, agent: Agent) -> Option<AgentRemoteStatus> {
-        self.agents.get(agent_label(agent)).cloned()
+        self.agents.get(agent_manifest_id(agent)).cloned()
     }
 }
 
@@ -213,7 +213,7 @@ fn check_and_update_from_url(url: &str) -> Result<ManifestUpdateOutput, String> 
 
     let mut updated = Vec::new();
     for entry in catalog {
-        let agent_id = agent_label(entry.agent).to_string();
+        let agent_id = agent_manifest_id(entry.agent).to_string();
         let manifest_url = join_url(&base_url, &entry.path)?;
         match fetch_text(&manifest_url)
             .map_err(|err| format!("fetch failed: {err}"))
@@ -337,7 +337,7 @@ fn parse_catalog(content: &str) -> Result<Vec<CatalogAgent>, String> {
                 entry.id, entry.path
             ));
         }
-        if !seen.insert(agent_label(agent).to_string()) {
+        if !seen.insert(agent_manifest_id(agent).to_string()) {
             return Err(format!("catalog contains duplicate agent {}", entry.id));
         }
         agents.push(CatalogAgent {
@@ -379,7 +379,7 @@ pub(crate) fn status_path() -> PathBuf {
 pub(crate) fn remote_manifest_path(agent: Agent) -> PathBuf {
     state_root()
         .join("remote")
-        .join(format!("{}.toml", agent_label(agent)))
+        .join(format!("{}.toml", agent_manifest_id(agent)))
 }
 
 pub(crate) fn cached_remote_version(agent: Agent) -> Option<ManifestVersion> {
@@ -760,6 +760,53 @@ path = "codex-2.toml"
 "#
         )
         .is_err());
+    }
+
+    #[test]
+    fn senpi_manifest_status_uses_legacy_storage_id() {
+        let status = ManifestUpdateStatus {
+            agents: BTreeMap::from([(
+                "senpi".to_string(),
+                AgentRemoteStatus {
+                    cached_version: Some("2026.08.13.1".to_string()),
+                    attempted_version: None,
+                    last_checked_unix: None,
+                    last_result: "updated".to_string(),
+                    last_error: None,
+                },
+            )]),
+            ..ManifestUpdateStatus::default()
+        };
+
+        assert_eq!(
+            status.agent_status(Agent::Senpi),
+            status.agents.get("senpi").cloned()
+        );
+        assert!(!status.agents.contains_key("omo"));
+    }
+
+    #[test]
+    fn senpi_catalog_entry_maps_to_canonical_omo_agent() {
+        let agents = parse_catalog(
+            r#"
+schema_version = 1
+
+[[agents]]
+id = "senpi"
+path = "senpi.toml"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            agents,
+            vec![CatalogAgent {
+                agent: Agent::Senpi,
+                path: "senpi.toml".to_string(),
+            }]
+        );
+        assert_eq!(agent_label(agents[0].agent), "omo");
+        assert_eq!(agent_manifest_id(agents[0].agent), "senpi");
     }
 
     #[test]

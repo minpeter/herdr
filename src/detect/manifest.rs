@@ -7,8 +7,8 @@ use regex::Regex;
 use serde::Deserialize;
 
 use super::{
-    agent_label, manifest_update::ManifestVersion, parse_agent_label, Agent, AgentDetection,
-    AgentState,
+    agent_label, agent_manifest_id, manifest_update::ManifestVersion, parse_agent_label, Agent,
+    AgentDetection, AgentState,
 };
 
 pub const DEFAULT_KNOWN_AGENT_IDLE_FALLBACK: &str = "default_known_agent_idle_fallback";
@@ -706,7 +706,7 @@ fn bundled_loaded_manifest(
 }
 
 fn bundled_manifest(agent: Agent) -> Option<AgentManifest> {
-    let id = agent_label(agent);
+    let id = agent_manifest_id(agent);
     BUNDLED_MANIFESTS
         .iter()
         .find(|(manifest_id, _)| *manifest_id == id)
@@ -1100,7 +1100,7 @@ fn override_path(agent: Agent) -> Option<PathBuf> {
     Some(
         crate::config::config_dir()
             .join("agent-detection")
-            .join(format!("{}.toml", agent_label(agent))),
+            .join(format!("{}.toml", agent_manifest_id(agent))),
     )
 }
 

@@ -358,15 +358,25 @@ where
     D: serde::Deserializer<'de>,
 {
     let rows_by_agent = BTreeMap::<String, AgentSidebarRows>::deserialize(deserializer)?;
-    for (id, rows) in &rows_by_agent {
-        if crate::detect::parse_canonical_agent_label(id).is_none() {
-            return Err(serde::de::Error::custom(format!(
+    let mut normalized_rows_by_agent = BTreeMap::new();
+    for (id, rows) in rows_by_agent {
+        let agent = crate::detect::parse_persisted_agent_label(&id).ok_or_else(|| {
+            serde::de::Error::custom(format!(
                 "unknown canonical agent id `{id}` in sidebar rows_by_agent"
+            ))
+        })?;
+        validate_sidebar_rows(&rows).map_err(serde::de::Error::custom)?;
+        let canonical_id = crate::detect::agent_label(agent).to_string();
+        if normalized_rows_by_agent
+            .insert(canonical_id.clone(), rows)
+            .is_some()
+        {
+            return Err(serde::de::Error::custom(format!(
+                "duplicate canonical agent id `{canonical_id}` in sidebar rows_by_agent"
             )));
         }
-        validate_sidebar_rows(rows).map_err(serde::de::Error::custom)?;
     }
-    Ok(rows_by_agent)
+    Ok(normalized_rows_by_agent)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -645,5 +655,14 @@ rows = [[{ token = "git_status", fg = "#ff00aa" }], [{ token = "$jj", bold = tru
                 "accepted key {key:?}"
             );
         }
+    }
+
+    #[test]
+    fn normalizes_legacy_senpi_override_key_to_omo() {
+        let input = "[ui.sidebar.agents.rows_by_agent]\nsenpi = [[\"agent\"]]\n";
+        let config: crate::config::Config = toml::from_str(input).expect("legacy senpi key");
+
+        assert!(config.ui.sidebar.agents.rows_by_agent.contains_key("omo"));
+        assert!(!config.ui.sidebar.agents.rows_by_agent.contains_key("senpi"));
     }
 }
