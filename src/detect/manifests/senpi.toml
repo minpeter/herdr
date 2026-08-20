@@ -1,7 +1,7 @@
 id = "senpi"
-version = "2026.08.13.1"
+version = "2026.08.20.1"
 min_engine_version = 1
-updated_at = "2026-08-13T00:00:00Z"
+updated_at = "2026-08-20T00:00:00Z"
 aliases = ["omo", "omo-senpi", "omo-native"]
 
 # Senpi powers the OmO Native coding-agent CLIs: npm @code-yeongyu/senpi
@@ -42,6 +42,17 @@ priority = 905
 region = "after_last_horizontal_rule"
 visible_working = true
 line_regex = ['^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ · (?:agent|category):.+ · running ·(?: .*)?[ \t]*$']
+
+[[rules]]
+id = "goal_continuation_working"
+state = "working"
+priority = 905
+region = "after_last_horizontal_rule"
+visible_working = true
+all = [
+  { contains = ["Pursuing goal", "goal continues in"] },
+  { line_regex = ['OmO Native\) Pursuing goal\b.*goal continues in [0-9]+m(?: [0-9]+s)?'] },
+]
 
 [[rules]]
 id = "interrupt_suffix_working"

@@ -100,6 +100,26 @@ fn known_agent_no_match_defaults_to_idle_fallback() {
 }
 
 #[test]
+fn senpi_active_goal_continuation_is_working() {
+    let screen = "\
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+~/homelab/flash-freerouter • main • 프로젝트 5줄 설명 작성 • CH20.7% • 136K/372K (36.7%) (auto)
+(😺 OmO Native) Pursuing goal (17m) ▰▰▰▰▰▰▰▱▱▱▱▱ goal continues in 1m 50s · 1 bash on duty
+";
+
+    let explain = explain(Agent::Senpi, screen);
+
+    assert_eq!(explain.state, AgentState::Working);
+    assert!(explain.visible_working);
+    assert_eq!(
+        explain.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("goal_continuation_working")
+    );
+}
+
+#[test]
 fn rule_semantics_apply_gates_priority_and_line_regex() {
     with_manifest_dirs("rule-semantics", || {
         write_local_codex(&rules_manifest(
