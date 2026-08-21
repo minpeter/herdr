@@ -985,6 +985,34 @@ fn senpi_interrupt_suffix_working() {
 }
 
 #[test]
+fn senpi_pasted_interrupt_suffix_does_not_trigger_working() {
+    let screen = "────────────────────────────────────────────────\n\
+        ❯ Pasted status:\n\
+          • Working (4m 27s • esc to interrupt)\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - github.com", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn senpi_working_literal_prose_does_not_trigger_working() {
+    let screen = "The documentation says Working... while a task is active.\n\
+        ────────────────────────────────────────────────\n\
+        ❯\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - github.com", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_working);
+}
+
+#[test]
 fn senpi_compacting_context_spinner_is_working() {
     let screen =
         "TPS 44.9 tok/s. Cache hit 86.6%, 313.4s\n  ⠙ Compacting context... (esc to cancel)\n\
@@ -1116,6 +1144,22 @@ fn senpi_permission_prompt_blocked() {
         Some("permission_prompt_blocked")
     );
     assert!(result.visible_blocker);
+}
+
+#[test]
+fn senpi_pasted_permission_options_do_not_trigger_blocked() {
+    let screen = "────────────────────────────────────────────────\n\
+        ❯ Permission example:\n\
+          Allow once\n\
+          Allow always\n\
+          Deny\n\
+        ────────────────────────────────────────────────\n\
+        (🏴‍☠️ OmO Native) • ~/github.com\n";
+    let result = osc_explain(Agent::Senpi, screen, "senpi - github.com", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(result.matched_rule.is_none());
+    assert!(!result.visible_blocker);
 }
 
 #[test]

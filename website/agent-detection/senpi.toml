@@ -1,7 +1,7 @@
 id = "senpi"
-version = "2026.08.20.2"
+version = "2026.08.21.1"
 min_engine_version = 1
-updated_at = "2026-08-20T00:00:00Z"
+updated_at = "2026-08-21T00:00:00Z"
 aliases = ["omo", "omo-senpi", "omo-native"]
 
 # Senpi powers the OmO Native coding-agent CLIs: npm @code-yeongyu/senpi
@@ -23,9 +23,14 @@ aliases = ["omo", "omo-senpi", "omo-native"]
 id = "permission_prompt_blocked"
 state = "blocked"
 priority = 980
-region = "whole_recent"
+region = "bottom_non_empty_lines(8)"
 visible_blocker = true
-contains = ["Allow once", "Allow always", "Deny"]
+line_regex = [
+  '^Permission required for .+$',
+  '^[ \t]*Allow once[ \t]*$',
+  '^[ \t]*Allow always[ \t]*$',
+  '^[ \t]*Deny[ \t]*$',
+]
 
 [[rules]]
 id = "compacting_context_working"
@@ -55,18 +60,14 @@ line_regex = ['OmO Native\) Pursuing goal\b']
 id = "interrupt_suffix_working"
 state = "working"
 priority = 900
-region = "whole_recent"
+region = "above_prompt_box"
 visible_working = true
-regex = ['to interrupt\)']
+line_regex = ['^[ \t]*[•⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ \([^)\n]+ to interrupt\)[ \t]*$']
 
 [[rules]]
 id = "working_literal"
 state = "working"
 priority = 100
-region = "whole_recent"
+region = "above_prompt_box"
 visible_working = true
-any = [
-  { contains = ["Working ("] },
-  { contains = ["Working…"] },
-  { contains = ["Working..."] },
-]
+line_regex = ['^[ \t]*[•⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working(?: \([^)\n]+\)|…|\.\.\.)[ \t]*$']
