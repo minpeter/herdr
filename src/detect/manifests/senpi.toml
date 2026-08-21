@@ -1,5 +1,5 @@
 id = "senpi"
-version = "2026.08.21.1"
+version = "2026.08.21.2"
 min_engine_version = 1
 updated_at = "2026-08-21T00:00:00Z"
 aliases = ["omo", "omo-senpi", "omo-native"]
@@ -54,7 +54,7 @@ state = "working"
 priority = 905
 region = "after_last_horizontal_rule"
 visible_working = true
-line_regex = ['OmO Native\) Pursuing goal\b']
+line_regex = ['^[ \t]*\([^)\n]*OmO Native\)[^\n]*\bPursuing goal\b[^\n]*$']
 
 [[rules]]
 id = "interrupt_suffix_working"

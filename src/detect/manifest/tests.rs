@@ -140,6 +140,50 @@ fn senpi_pursuing_goal_without_continuation_is_working() {
 }
 
 #[test]
+fn senpi_pursuing_goal_after_footer_metadata_is_working() {
+    let screen = "\
+  ⠧ Compacting... (esc to cancel)  실제 prompt submit → daemon/model → rendered response end-to-end 미검증
+
+ Todo
+ Native Panel
+ [ ] Cleanup native panel browser build resources
+ [✓] chromium patch test: add active extension close RED
+ [•] Chromium button: close active extension panel explicitly
+ [ ] Rebuild local Chromium toggle-close fix
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+(🏴‍☠️ OmO Native) • ~/github.com/minpeter/openaside • main • 리눅스 빌드 진행상황 조사 • CH99.8% • 256K/272K (94.0%) (auto) • (codex-lb) gpt-5.6-sol:high • fallback: openai-codex/gpt-5.6-sol Pursuing goal (1h 29m)
+";
+
+    let explain = explain(Agent::Senpi, screen);
+
+    assert_eq!(explain.state, AgentState::Working);
+    assert!(explain.visible_working);
+    assert_eq!(
+        explain.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("goal_continuation_working")
+    );
+}
+
+#[test]
+fn senpi_pasted_metadata_pursuing_goal_does_not_trigger_working() {
+    let screen = "\
+────────────────────────────────────────────────────────────────────────────
+❯ 이 footer가 왜 감지되지 않는지 설명해줘:
+  (🏴‍☠️ OmO Native) • ~/github.com/minpeter/openaside • main • (codex-lb) gpt-5.6-sol:high • fallback: openai-codex/gpt-5.6-sol Pursuing goal (1h 29m)
+────────────────────────────────────────────────────────────────────────────
+(🏴‍☠️ OmO Native) • ~/github.com/minpeter/openaside • main • Goal achieved (2m)
+";
+
+    let explain = explain(Agent::Senpi, screen);
+
+    assert_eq!(explain.state, AgentState::Idle);
+    assert!(explain.matched_rule.is_none());
+    assert!(!explain.visible_working);
+}
+
+#[test]
 fn rule_semantics_apply_gates_priority_and_line_regex() {
     with_manifest_dirs("rule-semantics", || {
         write_local_codex(&rules_manifest(
