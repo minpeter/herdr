@@ -155,7 +155,7 @@ fn pane_report_metadata_sends_presentation_request() {
             "--token",
             "summary=reviewing auth",
             "--token",
-            "model=opus",
+            "model=example-model",
             "--clear-token",
             "old",
             "--ttl-ms",
@@ -182,7 +182,7 @@ fn pane_report_metadata_sends_presentation_request() {
         "deep in the mines"
     );
     assert_eq!(request["params"]["tokens"]["summary"], "reviewing auth");
-    assert_eq!(request["params"]["tokens"]["model"], "opus");
+    assert_eq!(request["params"]["tokens"]["model"], "example-model");
     assert!(request["params"]["tokens"]["old"].is_null());
     assert_eq!(request["params"]["ttl_ms"], 3_600_000);
 
