@@ -345,8 +345,8 @@ rows = [
 ```bash
 herdr pane report-metadata <pane_id> \
   --source my-agent-hook \
-  --token model=opus \
-  --token summary="reviewing authentication"
+  --token "model=opus" \
+  --token "summary=reviewing authentication"
 ```
 
 自定义 Space token 可用同样的方式通过 `herdr workspace report-metadata` 报告。未报告的自定义 token 会直接消失。

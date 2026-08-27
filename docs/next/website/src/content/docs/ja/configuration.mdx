@@ -345,8 +345,8 @@ rows = [
 ```bash
 herdr pane report-metadata <pane_id> \
   --source my-agent-hook \
-  --token model=opus \
-  --token summary="reviewing authentication"
+  --token "model=opus" \
+  --token "summary=reviewing authentication"
 ```
 
 カスタム Space トークンには、同じ方法で `herdr workspace report-metadata` を使います。報告されていないカスタムトークンは表示されません。

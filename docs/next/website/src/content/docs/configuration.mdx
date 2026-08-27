@@ -360,8 +360,8 @@ rows = [
 ```bash
 herdr pane report-metadata <pane_id> \
   --source my-agent-hook \
-  --token model=opus \
-  --token summary="reviewing authentication"
+  --token "model=opus" \
+  --token "summary=reviewing authentication"
 ```
 
 Use `herdr workspace report-metadata` in the same way for custom Space tokens. Unreported custom tokens simply disappear.

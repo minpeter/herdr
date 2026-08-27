@@ -116,7 +116,7 @@ herdr workspace create [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [
 herdr workspace get <workspace_id>
 herdr workspace focus <workspace_id>
 herdr workspace rename <workspace_id> <label>
-herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]
+herdr workspace report-metadata <workspace_id> --source ID [--token <NAME=VALUE>] [--clear-token NAME] [--seq N] [--ttl-ms N]
 herdr workspace close <workspace_id>
 ```
 
@@ -250,7 +250,7 @@ herdr pane report-metadata <pane_id> \
   [--display-agent TEXT|--clear-display-agent] \
   [--state-label STATUS=TEXT] \
   [--clear-state-labels] \
-  [--token NAME=VALUE] \
+  [--token <NAME=VALUE>] \
   [--clear-token NAME] \
   [--seq N] \
   [--ttl-ms N]
