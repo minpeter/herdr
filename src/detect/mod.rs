@@ -64,10 +64,11 @@ pub enum Agent {
     Qwen,
     Maki,
     Senpi,
+    Muse,
 }
 
 impl Agent {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::Pi,
         Self::Claude,
         Self::Codex,
@@ -91,9 +92,10 @@ impl Agent {
         Self::Qwen,
         Self::Maki,
         Self::Senpi,
+        Self::Muse,
     ];
 
-    pub const SCREEN_MANIFEST_AGENTS: [Self; 21] = [
+    pub const SCREEN_MANIFEST_AGENTS: [Self; 22] = [
         Self::Pi,
         Self::Claude,
         Self::Codex,
@@ -115,6 +117,7 @@ impl Agent {
         Self::Qwen,
         Self::Maki,
         Self::Senpi,
+        Self::Muse,
     ];
 }
 
@@ -143,6 +146,7 @@ pub fn agent_label(agent: Agent) -> &'static str {
         Agent::Qwen => "qwen",
         Agent::Maki => "maki",
         Agent::Senpi => "omo",
+        Agent::Muse => "muse",
     }
 }
 
@@ -184,6 +188,7 @@ pub fn interactive_agent_executable(agent: Agent) -> &'static str {
         Agent::Qwen => "qwen",
         Agent::Maki => "maki",
         Agent::Senpi => "senpi",
+        Agent::Muse => "muse",
     }
 }
 
@@ -203,6 +208,7 @@ pub(crate) fn parse_persisted_agent_label(label: &str) -> Option<Agent> {
 }
 
 fn lookup_agent(name: &str) -> Option<Agent> {
+    let name = path_basename(name);
     match name {
         "pi" => Some(Agent::Pi),
         "claude" | "claude-code" => Some(Agent::Claude),
@@ -227,8 +233,23 @@ fn lookup_agent(name: &str) -> Option<Agent> {
         "qwen" | "qwen-code" | "qwen code" => Some(Agent::Qwen),
         "maki" => Some(Agent::Maki),
         "senpi" | "omo" | "omo-senpi" | "omo-native" => Some(Agent::Senpi),
+        "muse" | "muse-code" | "muse-cli" => Some(Agent::Muse),
+        _ if is_muse_versioned_binary(name) => Some(Agent::Muse),
         _ => None,
     }
+}
+
+/// Muse's install-dir launcher script resolves the active release and execs
+/// `muse-bin-<version>` (e.g. `muse-bin-0.1.0-R708.1`), so the running
+/// process never carries a bare `muse`/`muse-bin` alias. Require a digit
+/// immediately after the `muse-bin-` prefix so unrelated binaries such as
+/// `muse-binary` or a bare `muse-bin` stay unmatched.
+/// Accepts path-qualified `argv0` values by checking only the basename, since
+/// the launcher may `exec` with an absolute install-dir path.
+fn is_muse_versioned_binary(name: &str) -> bool {
+    path_basename(name)
+        .strip_prefix("muse-bin-")
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
 }
 
 /// Identify which agent is running from the process name.
@@ -601,24 +622,39 @@ fn agent_name_from_path_token(token: &str) -> Option<String> {
 }
 
 fn agent_name_from_known_package_path(path: &str) -> Option<String> {
-    let components: Vec<String> = path
+    let raw_components: Vec<&str> = path
         .split(['/', '\\'])
         .filter(|component| !component.is_empty())
+        .collect();
+    let ends_with = |suffix: &[&str]| {
+        raw_components.len() >= suffix.len()
+            && raw_components[raw_components.len() - suffix.len()..]
+                .iter()
+                .zip(suffix)
+                .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
+    };
+    if ends_with(&[
+        "node_modules",
+        "@earendil-works",
+        "pi-coding-agent",
+        "dist",
+        "cli.js",
+    ]) || ends_with(&[
+        "node_modules",
+        "@earendil-works",
+        "pi-coding-agent",
+        "dist",
+        "bundle",
+        "cli.js",
+    ]) {
+        return Some(agent_label(Agent::Pi).to_string());
+    }
+
+    let components: Vec<String> = raw_components
+        .into_iter()
         .map(normalized_agent_lookup_name)
         .collect();
-
     for window in components.windows(5) {
-        if window
-            == [
-                "node_modules",
-                "@earendil-works",
-                "pi-coding-agent",
-                "dist",
-                "cli",
-            ]
-        {
-            return Some(agent_label(Agent::Pi).to_string());
-        }
         if window == ["node_modules", "@code-yeongyu", "senpi", "dist", "cli"]
             || window == ["node_modules", "@code-yeongyu", "senpi", "dist", "cli-main"]
         {
@@ -790,6 +826,19 @@ mod tests {
         assert_eq!(identify_agent("maki"), Some(Agent::Maki));
         assert_eq!(identify_agent("senpi"), Some(Agent::Senpi));
         assert_eq!(identify_agent("omo"), Some(Agent::Senpi));
+        assert_eq!(identify_agent("muse"), Some(Agent::Muse));
+        assert_eq!(identify_agent("muse-code"), Some(Agent::Muse));
+        assert_eq!(identify_agent("muse-cli"), Some(Agent::Muse));
+        assert_eq!(identify_agent("muse-bin-0.1.0-R708.1"), Some(Agent::Muse));
+        assert_eq!(identify_agent("muse-bin-1.2.3"), Some(Agent::Muse));
+        assert_eq!(
+            identify_agent("/home/user/.local/bin/muse-bin-0.2.1-R1215.1"),
+            Some(Agent::Muse)
+        );
+        assert_eq!(
+            identify_agent(r"C:\Users\user\muse-bin-0.2.1-R1215.1.exe"),
+            Some(Agent::Muse)
+        );
     }
 
     #[test]
@@ -877,6 +926,7 @@ mod tests {
             (Agent::Qwen, "qwen"),
             (Agent::Maki, "maki"),
             (Agent::Senpi, "senpi"),
+            (Agent::Muse, "muse"),
         ];
         assert_eq!(expected.len(), Agent::ALL.len());
         for (agent, executable) in expected {
@@ -920,6 +970,13 @@ mod tests {
         assert_eq!(identify_agent("zsh"), None);
         assert_eq!(identify_agent("vim"), None);
         assert_eq!(identify_agent("node"), None);
+        assert_eq!(identify_agent("museum"), None);
+        assert_eq!(identify_agent("muse-helper"), None);
+        assert_eq!(identify_agent("muser"), None);
+        assert_eq!(identify_agent("musescore"), None);
+        assert_eq!(identify_agent("muse-bin"), None);
+        assert_eq!(identify_agent("muse-bin-"), None);
+        assert_eq!(identify_agent("muse-binary"), None);
     }
 
     #[test]
@@ -1186,6 +1243,26 @@ mod tests {
     }
 
     #[test]
+    fn identify_agent_in_job_detects_node_wrapped_pi_bundled_cli() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 123,
+            processes: vec![foreground_process(
+                123,
+                "node.exe",
+                &[
+                    r"C:\Users\herdr\AppData\Local\pi-node\current\node.exe",
+                    r"C:\Users\herdr\AppData\Local\pi-node\current/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+                ],
+            )],
+        };
+
+        assert_eq!(
+            identify_agent_in_job(&job),
+            Some((Agent::Pi, "pi".to_string()))
+        );
+    }
+
+    #[test]
     fn identify_agent_in_job_detects_node_wrapped_mastracode_package_cli() {
         let job = crate::platform::ForegroundJob {
             process_group_id: 123,
@@ -1206,20 +1283,24 @@ mod tests {
     }
 
     #[test]
-    fn identify_agent_in_job_ignores_non_cli_pi_package_script() {
-        let job = crate::platform::ForegroundJob {
-            process_group_id: 123,
-            processes: vec![foreground_process(
-                123,
-                "node.exe",
-                &[
-                    "node.exe",
-                    "C:\\Users\\herdr\\AppData\\Roaming\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\scripts\\build.js",
-                ],
-            )],
-        };
+    fn identify_agent_in_job_ignores_non_cli_pi_package_scripts() {
+        for script in [
+            r"C:\Users\herdr\AppData\Roaming\npm\node_modules\@earendil-works\pi-coding-agent\scripts\build.js",
+            r"C:\Users\herdr\AppData\Local\pi-node\current\node_modules\@earendil-works\pi-coding-agent\dist\bundle\update.js",
+            r"C:\workspace\dist\bundle\cli.js",
+            r"C:\workspace\node_modules\other-package\dist\bundle\cli.js",
+            r"C:\workspace\node_modules\@earendil-works\pi-coding-agent\dist\cli.exe",
+            r"C:\workspace\node_modules\@earendil-works\pi-coding-agent\dist\cli.js\other.js",
+            r"C:\workspace\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.exe",
+            r"C:\workspace\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js\other.js",
+        ] {
+            let job = crate::platform::ForegroundJob {
+                process_group_id: 123,
+                processes: vec![foreground_process(123, "node.exe", &["node.exe", script])],
+            };
 
-        assert_eq!(identify_agent_in_job(&job), None);
+            assert_eq!(identify_agent_in_job(&job), None, "script: {script}");
+        }
     }
 
     #[test]

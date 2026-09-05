@@ -64,18 +64,11 @@ pub(crate) fn start_server_with_stop_control(
     start_server_inner(api_tx, event_hub, default_capabilities(), Some(server_stop))
 }
 
-pub fn start_server_with_capabilities(
-    api_tx: ApiRequestSender,
-    event_hub: EventHub,
-    capabilities: Option<ServerCapabilities>,
-) -> std::io::Result<ServerHandle> {
-    start_server_inner(api_tx, event_hub, capabilities, None)
-}
-
 fn default_capabilities() -> Option<ServerCapabilities> {
     Some(ServerCapabilities {
         live_handoff: crate::platform::capabilities().live_handoff,
         detached_server_daemon: crate::platform::current_process_is_detached_server_daemon(),
+        endpoint_protocol_generation: Some(crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION),
     })
 }
 
@@ -376,10 +369,10 @@ fn handle_request(
         );
     }
 
-    dispatch_to_app(request, api_tx, None, response_write_complete, None)
+    dispatch_to_app(request, api_tx, None, response_write_complete, None, None)
 }
 
-fn api_method_name(method: &Method) -> &'static str {
+pub(crate) fn api_method_name(method: &Method) -> &'static str {
     match method {
         Method::Ping(_) => "ping",
         Method::ServerStop(_) => "server.stop",
@@ -388,6 +381,9 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::ServerAgentManifests(_) => "server.agent_manifests",
         Method::ServerReloadAgentManifests(_) => "server.reload_agent_manifests",
         Method::NotificationShow(_) => "notification.show",
+        Method::ProductAnnouncementDismiss(_) => "product_announcement.dismiss",
+        Method::ReleaseNotesDismiss(_) => "release_notes.dismiss",
+        Method::CommandInvoke(_) => "command.invoke",
         Method::ClientWindowTitleSet(_) => "client.window_title.set",
         Method::ClientWindowTitleClear(_) => "client.window_title.clear",
         Method::SessionSnapshot(_) => "session.snapshot",
@@ -436,11 +432,17 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::PaneEdges(_) => "pane.edges",
         Method::PaneFocusDirection(_) => "pane.focus_direction",
         Method::PaneResize(_) => "pane.resize",
+        Method::PaneScroll(_) => "pane.scroll",
+        Method::PaneEditScrollback(_) => "pane.edit_scrollback",
+        Method::PaneSelectionRead(_) => "pane.selection.read",
+        Method::PaneCopyMotion(_) => "pane.copy_motion",
+        Method::PaneCopySearch(_) => "pane.copy_search",
         Method::PaneList(_) => "pane.list",
         Method::PaneCurrent(_) => "pane.current",
         Method::PaneGet(_) => "pane.get",
         Method::PaneFocus(_) => "pane.focus",
         Method::PaneInputSet(_) => "pane.input.set",
+        Method::PaneLinkActivate(_) => "pane.link.activate",
         Method::PaneRename(_) => "pane.rename",
         Method::PaneSendText(_) => "pane.send_text",
         Method::PaneSendKeys(_) => "pane.send_keys",
@@ -464,6 +466,7 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::EventsSubscribe(_) => "events.subscribe",
         Method::EventsWait(_) => "events.wait",
         Method::PaneWaitForOutput(_) => "pane.wait_for_output",
+        Method::IntegrationList(_) => "integration.list",
         Method::IntegrationInstall(_) => "integration.install",
         Method::IntegrationUninstall(_) => "integration.uninstall",
         Method::PluginLink(_) => "plugin.link",
@@ -691,21 +694,28 @@ fn stream_subscriptions(
     event_hub: &EventHub,
     running: &Arc<AtomicBool>,
 ) -> std::io::Result<()> {
+    let event_start_sequence = event_hub.current_sequence();
     let mut subscriptions = Vec::with_capacity(params.subscriptions.len());
     for (index, subscription) in params.subscriptions.into_iter().enumerate() {
-        let active =
-            match ActiveSubscription::new(subscription, &request_id, index, api_tx, event_hub) {
-                Ok(active) => active,
-                Err(response) => {
-                    if let Err(err) = write_json_line(&mut stream, &response) {
-                        if is_connection_closed_error(&err) {
-                            return Ok(());
-                        }
-                        return Err(err);
+        let active = match ActiveSubscription::new(
+            subscription,
+            &request_id,
+            index,
+            api_tx,
+            event_hub,
+            event_start_sequence,
+        ) {
+            Ok(active) => active,
+            Err(response) => {
+                if let Err(err) = write_json_line(&mut stream, &response) {
+                    if is_connection_closed_error(&err) {
+                        return Ok(());
                     }
-                    return Ok(());
+                    return Err(err);
                 }
-            };
+                return Ok(());
+            }
+        };
         subscriptions.push(active);
     }
 
@@ -788,7 +798,22 @@ pub(super) fn dispatch_to_app_with_timeout(
     api_tx: &ApiRequestSender,
     timeout: Option<Duration>,
 ) -> String {
-    dispatch_to_app(request, api_tx, timeout, None, None)
+    dispatch_to_app(request, api_tx, timeout, None, None, None)
+}
+
+pub(super) fn dispatch_to_app_with_caller_timeout(
+    request: Request,
+    api_tx: &ApiRequestSender,
+    timeout: Option<Duration>,
+) -> String {
+    dispatch_to_app(
+        request,
+        api_tx,
+        timeout,
+        None,
+        None,
+        Some(("timeout", "timed out waiting for agent status")),
+    )
 }
 
 pub(super) fn dispatch_stream_open(
@@ -797,7 +822,7 @@ pub(super) fn dispatch_stream_open(
     timeout: Duration,
     active: Arc<AtomicBool>,
 ) -> String {
-    dispatch_to_app(request, api_tx, Some(timeout), None, Some(active))
+    dispatch_to_app(request, api_tx, Some(timeout), None, Some(active), None)
 }
 
 pub(super) fn dispatch_stream_frame(
@@ -811,6 +836,7 @@ pub(super) fn dispatch_stream_frame(
         Some(crate::app::pane_graphics::DIRECT_OUTER_TIMEOUT),
         None,
         Some(active),
+        None,
     )
 }
 
@@ -820,6 +846,7 @@ fn dispatch_to_app(
     timeout: Option<Duration>,
     response_write_complete: Option<std::sync::mpsc::Receiver<()>>,
     stream_active: Option<Arc<AtomicBool>>,
+    timeout_response: Option<(&str, &str)>,
 ) -> String {
     let request_id = request.id.clone();
     let request_active = stream_active.clone();
@@ -865,6 +892,11 @@ fn dispatch_to_app(
             if let Some(active) = request_active {
                 active.store(false, Ordering::Release);
             }
+            if err.kind() == std::io::ErrorKind::TimedOut {
+                if let Some((code, message)) = timeout_response {
+                    return error_response_json(request_id, code, message.into());
+                }
+            }
             error_response_json(
                 request_id,
                 "server_unavailable",
@@ -872,6 +904,26 @@ fn dispatch_to_app(
             )
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn caller_timeout_dispatch_uses_timeout_error() {
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let response = dispatch_to_app_with_caller_timeout(
+        Request {
+            id: "prompt-timeout".into(),
+            method: Method::AgentPrompt(crate::api::schema::AgentPromptParams {
+                target: "reviewer".into(),
+                text: "review this".into(),
+                wait: None,
+            }),
+        },
+        &tx,
+        Some(Duration::ZERO),
+    );
+    let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+    assert_eq!(error.error.code, "timeout");
 }
 
 fn error_response_json(id: String, code: &str, message: String) -> String {
@@ -1081,6 +1133,9 @@ mod tests {
             Some(ServerCapabilities {
                 live_handoff: true,
                 detached_server_daemon: true,
+                endpoint_protocol_generation: Some(
+                    crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION,
+                ),
             }),
             None,
             None,

@@ -74,6 +74,13 @@ pub enum Dirty {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerminalCompressionResult {
+    Unsupported,
+    Pending,
+    Complete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowSelection {
     pub start_x: u16,
     pub end_x: u16,
@@ -168,6 +175,8 @@ pub const MOUSE_BUTTON_WHEEL_RIGHT: ffi::GhosttyMouseButton =
     ffi::GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_SEVEN;
 pub const MOUSE_FORMAT_SGR: ffi::GhosttyMouseFormat =
     ffi::GhosttyMouseFormat_GHOSTTY_MOUSE_FORMAT_SGR;
+pub const MOUSE_FORMAT_SGR_PIXELS: ffi::GhosttyMouseFormat =
+    ffi::GhosttyMouseFormat_GHOSTTY_MOUSE_FORMAT_SGR_PIXELS;
 
 pub const MODE_APPLICATION_CURSOR_KEYS: u16 = 1;
 pub const MODE_FOCUS_EVENT: u16 = 1004;
@@ -871,6 +880,41 @@ impl Terminal {
         }
     }
 
+    pub(crate) fn compression_activity(&self) -> Result<u64, Error> {
+        let mut activity = 0;
+        // SAFETY: self.raw is a live terminal handle and activity is a valid out pointer.
+        unsafe {
+            ffi::ghostty_terminal_compression_activity(self.raw, &mut activity).into_result()?;
+        }
+        Ok(activity)
+    }
+
+    pub(crate) fn compress_incremental(&mut self) -> Result<TerminalCompressionResult, Error> {
+        let mut result =
+            ffi::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_UNSUPPORTED;
+        // SAFETY: self.raw is a live terminal handle and result is a valid out pointer.
+        unsafe {
+            ffi::ghostty_terminal_compress(
+                self.raw,
+                ffi::GhosttyTerminalCompressionMode_GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL,
+                &mut result,
+            )
+            .into_result()?;
+        }
+        match result {
+            ffi::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_UNSUPPORTED => {
+                Ok(TerminalCompressionResult::Unsupported)
+            }
+            ffi::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_PENDING => {
+                Ok(TerminalCompressionResult::Pending)
+            }
+            ffi::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE => {
+                Ok(TerminalCompressionResult::Complete)
+            }
+            _ => Err(Error(ffi::GhosttyResult_GHOSTTY_INVALID_VALUE)),
+        }
+    }
+
     pub fn set_default_palette(&mut self, palette: &[RgbColor; 256]) -> Result<(), Error> {
         let palette = palette.map(|color| ffi::GhosttyColorRgb {
             r: color.r,
@@ -1410,6 +1454,10 @@ impl Terminal {
 
     pub fn rows(&self) -> Result<u16, Error> {
         self.get_u16(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_ROWS)
+    }
+
+    pub fn cursor_y(&self) -> Result<u16, Error> {
+        self.get_u16(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_Y)
     }
 
     pub fn effective_foreground_color(&self) -> Result<Option<RgbColor>, Error> {
@@ -3297,6 +3345,38 @@ mod tests {
             .unwrap();
         }
         out
+    }
+
+    #[test]
+    fn incremental_compression_preserves_cold_scrollback() {
+        let mut terminal = Terminal::new(80, 24, 20_000_000).unwrap();
+        let initial_activity = terminal.compression_activity().unwrap();
+        let suffix = "x".repeat(66);
+        for line in 1..=10_000 {
+            terminal.write(format!("{line:05} {suffix}\r\n").as_bytes());
+        }
+        assert_ne!(terminal.compression_activity().unwrap(), initial_activity);
+
+        let mut complete = false;
+        for _ in 0..10_000 {
+            match terminal.compress_incremental().unwrap() {
+                TerminalCompressionResult::Unsupported => return,
+                TerminalCompressionResult::Pending => {}
+                TerminalCompressionResult::Complete => {
+                    complete = true;
+                    break;
+                }
+            }
+        }
+        assert!(complete, "incremental compression did not converge");
+
+        let oldest = terminal.read_text_screen((0, 0), (79, 0), false).unwrap();
+        assert!(oldest.starts_with("00001 "));
+        let last_row = terminal.total_rows().unwrap() as u32 - 1;
+        let newest = terminal
+            .read_text_screen((0, last_row - 1), (79, last_row), false)
+            .unwrap();
+        assert!(newest.contains("10000"));
     }
 
     #[test]
