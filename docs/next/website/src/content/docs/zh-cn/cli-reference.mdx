@@ -43,6 +43,23 @@ herdr api schema --output herdr-api.schema.json
 
 `herdr api schema` 会打印安装的二进制中包含的 socket 协议 schema 简短摘要。需要完整 JSON Schema 文档时使用 `--json`;要写入文件则使用 `--output PATH`。
 
+## 已保存的 SSH 机器
+
+```bash
+herdr machine list [--json]
+herdr machine add workbox --label "Build machine" [--remote-session agents]
+herdr machine rename <profile-id> --label "New name"
+herdr machine disable <profile-id>
+herdr machine enable <profile-id>
+herdr machine remove <profile-id>
+```
+
+`machine add` 会检查远程 Herdr 是否具备所需能力，仅在必要时征得批准后安装或更新，并在保存配置前启动指定会话的后台服务器。只要兼容，发行版本不必一致。需要批准安装或重启时，请在交互式终端中运行；设置失败或取消时不会保存配置。
+
+更改会自动应用到已打开的本地 Herdr 客户端，通常在一秒内生效。新增或启用的机器在后台连接；重命名不会重新连接。移除或禁用只会断开该机器，远程会话仍会继续运行。移除正在查看的机器会返回 Local；如果 Local 不可用，则显示不可用状态，直到重新连接。每份配置在客户端状态文件中保存一个不透明 ID、标签、SSH 目标、明确的远程会话名和启用状态。Herdr 不保存密码、私钥或其他 SSH 凭据。
+
+自动连接和重连均为非交互式。如果主机密钥、密码、密钥口令、MFA、安装、更新或重启需要批准，机器会显示 Attention，而不会打开隐藏的提示。请运行 Herdr 显示的独立连接命令，例如 `herdr --remote workbox --session agents --handoff`，在前台完成设置后重启客户端。
+
 ## Shell 补全
 
 ```bash

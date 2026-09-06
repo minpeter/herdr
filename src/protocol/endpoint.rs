@@ -20,6 +20,17 @@ pub const ENDPOINT_SNAPSHOT_KIND: &str = SNAPSHOT_CODEC_V1;
 pub const SURFACE_CODEC_V1: &str = "shell.surface.v1";
 pub const INPUT_CODEC_V1: &str = "shell.input.semantic.v1";
 pub const BLOB_CODEC_V1: &str = "shell.blob.v1";
+pub const SURFACE_INTEREST_CAPABILITY: &str = "surface_interest";
+pub const PRESENTATION_EFFECTS_FENCE_CAPABILITY: &str = "presentation_effects_fence";
+pub const PRESENTATION_EFFECTS_SYNC_KIND: &str = "endpoint.presentation.sync.v1";
+pub const PRESENTATION_EFFECTS_READY_KIND: &str = "endpoint.presentation.ready.v1";
+pub const HEALTH_CHECK_CAPABILITY: &str = "health_check";
+pub const HEALTH_PING_KIND: &str = "endpoint.health.ping.v1";
+pub const HEALTH_PONG_KIND: &str = "endpoint.health.pong.v1";
+
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndpointClientHello {
@@ -31,6 +42,8 @@ pub struct EndpointClientHello {
     pub direct_graphics: bool,
     pub endpoint_keybindings: bool,
     pub mouse_capture: bool,
+    #[serde(default = "default_true")]
+    pub surface_active: bool,
     #[serde(default)]
     pub snapshot_codecs: Vec<String>,
     #[serde(default)]
@@ -57,6 +70,8 @@ pub struct EndpointServerWelcome {
     pub blob_codec: String,
     #[serde(default)]
     pub methods: Vec<String>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<EndpointHandshakeError>,
 }
@@ -95,6 +110,11 @@ impl EndpointServerWelcome {
             input_codec: INPUT_CODEC_V1.into(),
             blob_codec: BLOB_CODEC_V1.into(),
             methods,
+            capabilities: vec![
+                SURFACE_INTEREST_CAPABILITY.into(),
+                PRESENTATION_EFFECTS_FENCE_CAPABILITY.into(),
+                HEALTH_CHECK_CAPABILITY.into(),
+            ],
             error: None,
         }
     }
@@ -108,6 +128,7 @@ impl EndpointServerWelcome {
             input_codec: INPUT_CODEC_V1.into(),
             blob_codec: BLOB_CODEC_V1.into(),
             methods: Vec::new(),
+            capabilities: Vec::new(),
             error: Some(EndpointHandshakeError {
                 code: code.into(),
                 message: message.into(),
@@ -130,6 +151,7 @@ mod tests {
             direct_graphics: false,
             endpoint_keybindings: false,
             mouse_capture: true,
+            surface_active: true,
             snapshot_codecs: vec![SNAPSHOT_CODEC_V1.into()],
             surface_codecs: vec![SURFACE_CODEC_V1.into()],
             input_codecs: vec![INPUT_CODEC_V1.into()],
@@ -192,6 +214,7 @@ mod tests {
         assert_eq!(welcome.surface_codec, SURFACE_CODEC_V1);
         assert_eq!(welcome.input_codec, INPUT_CODEC_V1);
         assert_eq!(welcome.blob_codec, BLOB_CODEC_V1);
+        assert!(welcome.capabilities.is_empty());
     }
 
     #[test]
@@ -241,6 +264,27 @@ mod tests {
         assert_eq!(
             decoded.commands[0].action,
             crate::protocol::ClientShellCommandAction::Unknown
+        );
+    }
+
+    #[test]
+    fn legacy_hello_defaults_to_an_active_surface() {
+        let mut value = serde_json::to_value(hello()).unwrap();
+        value.as_object_mut().unwrap().remove("surface_active");
+        let decoded: EndpointClientHello = serde_json::from_value(value).unwrap();
+        assert!(decoded.surface_active);
+    }
+
+    #[test]
+    fn compatible_server_advertises_endpoint_lifecycle_capabilities() {
+        let welcome = EndpointServerWelcome::compatible(Vec::new());
+        assert_eq!(
+            welcome.capabilities,
+            vec![
+                SURFACE_INTEREST_CAPABILITY.to_string(),
+                PRESENTATION_EFFECTS_FENCE_CAPABILITY.to_string(),
+                HEALTH_CHECK_CAPABILITY.to_string(),
+            ]
         );
     }
 

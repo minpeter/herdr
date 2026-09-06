@@ -9,7 +9,6 @@ use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 #[cfg(unix)]
 use super::write_to_server;
 #[cfg(unix)]
-use crate::ipc::LocalStream;
 #[cfg(unix)]
 use crate::protocol::{AttachScrollDirection, AttachScrollSource, ClientMessage};
 
@@ -260,7 +259,7 @@ fn attach_scroll_action(
 
 #[cfg(unix)]
 pub(super) fn write_attach_semantic_action(
-    stream: &mut LocalStream,
+    stream: &mut impl super::ClientMessageSink,
     action: AttachSemanticAction,
 ) -> io::Result<()> {
     let message = match action {

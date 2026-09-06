@@ -159,6 +159,8 @@ pub(crate) struct ClientConnection {
     pub(crate) host_keyboard_report_all_active: Option<bool>,
     /// Whether an ordinary render was skipped because the render channel was full.
     pub(crate) render_pending: bool,
+    /// Whether this connection receives pane surfaces and may affect presentation state.
+    pub(crate) shell_surface_active: bool,
     /// Whether this shell wants host mouse capture without pane demand.
     pub(crate) shell_mouse_capture: bool,
     /// Last host mouse capture mode sent to this client.
@@ -179,6 +181,9 @@ pub(crate) struct ClientConnection {
     pub(crate) shell_projection_revision: u64,
     /// Whether this shell is waiting for one ordered endpoint command response.
     pub(crate) shell_endpoint_command_in_flight: bool,
+    /// Surface projection epoch that owned the in-flight command. Deferred navigation may run
+    /// only if this exact presentation lease is still active when its response arrives.
+    pub(crate) shell_endpoint_command_surface_revision: Option<u64>,
     /// Request id and buffered response for a deferred worktree-created navigation.
     pub(crate) shell_deferred_navigation_request_id: Option<String>,
     pub(crate) shell_deferred_navigation_response: Option<Vec<u8>>,
@@ -230,6 +235,7 @@ impl ClientConnection {
             outer_terminal_focus: None,
             host_keyboard_report_all_active: None,
             render_pending: false,
+            shell_surface_active: true,
             shell_mouse_capture: false,
             host_mouse_capture_active: None,
             host_sgr_pixels_active: None,
@@ -240,6 +246,7 @@ impl ClientConnection {
             shell_snapshot: None,
             shell_projection_revision: 0,
             shell_endpoint_command_in_flight: false,
+            shell_endpoint_command_surface_revision: None,
             shell_deferred_navigation_request_id: None,
             shell_deferred_navigation_response: None,
             shell_uses_endpoint_keybindings: false,
@@ -451,12 +458,16 @@ impl ClientConnection {
     pub(crate) fn is_shell_client(&self) -> bool {
         matches!(self.mode, ClientConnectionMode::ClientShell)
     }
+
+    pub(crate) fn is_active_shell_client(&self) -> bool {
+        self.is_shell_client() && self.shell_surface_active
+    }
 }
 
 pub(crate) fn latest_shell_client(clients: &HashMap<u64, ClientConnection>) -> Option<u64> {
     clients
         .iter()
-        .filter(|(_, client)| client.is_shell_client())
+        .filter(|(_, client)| client.is_active_shell_client())
         .max_by_key(|(_, client)| client.last_activity)
         .map(|(&client_id, _)| client_id)
 }

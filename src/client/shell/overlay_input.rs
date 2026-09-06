@@ -191,98 +191,123 @@ impl ClientShellState {
     }
 
     pub(super) fn open_navigator_overlay(&mut self) {
-        let Some(snapshot) = self.snapshot.as_deref() else {
-            return;
-        };
-        let expanded_workspaces = snapshot
-            .workspaces
-            .iter()
-            .map(|workspace| workspace.workspace_id.clone())
-            .collect();
+        let expanded_workspaces =
+            super::aggregate_navigation::cached_endpoint_snapshots(&self.endpoints)
+                .flat_map(|endpoint| {
+                    endpoint.snapshot.workspaces.iter().map(move |workspace| {
+                        (endpoint.endpoint_id.clone(), workspace.workspace_id.clone())
+                    })
+                })
+                .collect();
         let mut navigator = ClientNavigatorOverlay {
             query: String::new(),
             search_focused: false,
-            selected: 0,
+            selected: None,
             scroll: 0,
             filter: None,
             expanded_workspaces,
         };
-        let rows = render::client_navigator_rows(snapshot, &navigator);
-        navigator.selected = rows.iter().position(|row| row.current).unwrap_or(0);
+        let rows =
+            render::client_navigator_rows(&self.endpoints, &self.active_endpoint_id, &navigator);
+        navigator.selected = rows
+            .iter()
+            .find(|row| row.current)
+            .map(|row| row.target.clone());
         self.overlay = Some(ClientShellOverlay::Navigator(navigator));
     }
 
     pub(super) fn move_navigator_selection(&mut self, delta: isize) {
-        let Some(snapshot) = self.snapshot.as_deref() else {
-            return;
-        };
         let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_mut() else {
             return;
         };
-        let rows = render::client_navigator_rows(snapshot, navigator);
+        let rows =
+            render::client_navigator_rows(&self.endpoints, &self.active_endpoint_id, navigator);
         if rows.is_empty() {
-            navigator.selected = 0;
+            navigator.selected = None;
             return;
         }
-        navigator.selected = (navigator.selected as isize + delta)
-            .clamp(0, rows.len().saturating_sub(1) as isize) as usize;
+        let selected =
+            super::aggregate_navigation::navigator_selected_index(&rows, navigator).unwrap_or(0);
+        let next =
+            (selected as isize + delta).clamp(0, rows.len().saturating_sub(1) as isize) as usize;
+        navigator.selected = Some(rows[next].target.clone());
     }
 
     pub(super) fn accept_navigator_selection(&mut self, outcome: &mut ClientShellInput) {
-        let target = {
-            let Some(snapshot) = self.snapshot.as_deref() else {
-                return;
-            };
-            let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_ref() else {
-                return;
-            };
-            render::client_navigator_rows(snapshot, navigator)
-                .get(navigator.selected)
-                .map(|row| row.target.clone())
-        };
+        let target = self.overlay.as_ref().and_then(|overlay| match overlay {
+            ClientShellOverlay::Navigator(navigator) => {
+                let rows = render::client_navigator_rows(
+                    &self.endpoints,
+                    &self.active_endpoint_id,
+                    navigator,
+                );
+                super::aggregate_navigation::selected_navigator_target(&rows, navigator)
+            }
+            _ => None,
+        });
         let Some(target) = target else {
             return;
         };
-        self.overlay = None;
-        let method = match target {
-            ClientNavigatorTarget::Workspace(workspace_id) => {
-                crate::api::schema::Method::WorkspaceFocus(crate::api::schema::WorkspaceTarget {
-                    workspace_id,
-                })
+        let activated = match target {
+            ClientNavigatorTarget::Machine { endpoint_id } => {
+                self.activate_endpoint(endpoint_id, outcome)
             }
-            ClientNavigatorTarget::Tab(tab_id) => {
-                crate::api::schema::Method::TabFocus(crate::api::schema::TabTarget { tab_id })
+            ClientNavigatorTarget::Workspace {
+                endpoint_id,
+                workspace_id,
+            } => self.focus_or_activate(
+                endpoint_id,
+                ClientEndpointFocusTarget::Workspace(workspace_id),
+                outcome,
+            ),
+            ClientNavigatorTarget::Tab {
+                endpoint_id,
+                tab_id,
+            } => {
+                self.focus_or_activate(endpoint_id, ClientEndpointFocusTarget::Tab(tab_id), outcome)
             }
-            ClientNavigatorTarget::Pane(pane_id) => {
-                crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget { pane_id })
-            }
+            ClientNavigatorTarget::Pane {
+                endpoint_id,
+                pane_id,
+            } => self.focus_or_activate(
+                endpoint_id,
+                ClientEndpointFocusTarget::Pane(pane_id),
+                outcome,
+            ),
         };
-        self.push_endpoint_method(method, outcome);
+        if activated {
+            self.overlay = None;
+        }
         outcome.repaint = true;
     }
 
     pub(super) fn toggle_selected_navigator_workspace(&mut self) {
-        let workspace_id = {
-            let Some(snapshot) = self.snapshot.as_deref() else {
-                return;
-            };
-            let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_ref() else {
-                return;
-            };
-            render::client_navigator_rows(snapshot, navigator)
-                .get(navigator.selected)
-                .and_then(|row| match &row.target {
-                    ClientNavigatorTarget::Workspace(workspace_id) => Some(workspace_id.clone()),
-                    _ => None,
-                })
-        };
-        if let (Some(workspace_id), Some(ClientShellOverlay::Navigator(navigator))) =
-            (workspace_id, self.overlay.as_mut())
-        {
-            if !navigator.expanded_workspaces.remove(&workspace_id) {
-                navigator.expanded_workspaces.insert(workspace_id);
+        let workspace_key = self.overlay.as_ref().and_then(|overlay| match overlay {
+            ClientShellOverlay::Navigator(navigator) => {
+                let rows = render::client_navigator_rows(
+                    &self.endpoints,
+                    &self.active_endpoint_id,
+                    navigator,
+                );
+                super::aggregate_navigation::selected_navigator_target(&rows, navigator).and_then(
+                    |target| match target {
+                        ClientNavigatorTarget::Workspace {
+                            endpoint_id,
+                            workspace_id,
+                        } => Some((endpoint_id, workspace_id)),
+                        _ => None,
+                    },
+                )
             }
-            navigator.selected = 0;
+            _ => None,
+        });
+        if let (Some(workspace_key), Some(ClientShellOverlay::Navigator(navigator))) =
+            (workspace_key, self.overlay.as_mut())
+        {
+            if !navigator.expanded_workspaces.remove(&workspace_key) {
+                navigator.expanded_workspaces.insert(workspace_key);
+            }
+            navigator.selected = None;
             navigator.scroll = 0;
         }
     }
@@ -433,7 +458,7 @@ impl ClientShellState {
             Some(ClientShellOverlay::Navigator(navigator)) if navigator.search_focused => {
                 navigator.query.push_str(text);
                 navigator.filter = None;
-                navigator.selected = 0;
+                navigator.selected = None;
                 true
             }
             _ => false,
@@ -641,11 +666,11 @@ impl ClientShellState {
                     if code == KeyCode::Char('u') && modifiers.contains(KeyModifiers::CONTROL) {
                         navigator.query.clear();
                         navigator.filter = None;
-                        navigator.selected = 0;
+                        navigator.selected = None;
                     } else if code == KeyCode::Backspace {
                         navigator.query.pop();
                         navigator.filter = None;
-                        navigator.selected = 0;
+                        navigator.selected = None;
                     } else if let KeyCode::Char(character) = code {
                         if modifiers.difference(KeyModifiers::SHIFT).is_empty() {
                             navigator.filter = None;
@@ -654,7 +679,7 @@ impl ClientShellState {
                             } else {
                                 navigator.query.push(character);
                             }
-                            navigator.selected = 0;
+                            navigator.selected = None;
                         }
                     }
                     outcome.repaint = true;
@@ -664,7 +689,7 @@ impl ClientShellState {
             if code == KeyCode::Backspace && modifiers.is_empty() {
                 if let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_mut() {
                     if navigator.filter.take().is_some() {
-                        navigator.selected = 0;
+                        navigator.selected = None;
                     }
                 }
                 outcome.repaint = true;
@@ -672,25 +697,23 @@ impl ClientShellState {
             }
             if code == KeyCode::Home && modifiers.is_empty() {
                 if let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_mut() {
-                    navigator.selected = 0;
+                    navigator.selected = None;
                     navigator.scroll = 0;
                 }
                 outcome.repaint = true;
                 return;
             }
             if matches!(code, KeyCode::End | KeyCode::Char('G')) && modifiers.is_empty() {
-                let last = self
-                    .snapshot
-                    .as_deref()
-                    .zip(self.overlay.as_ref())
-                    .and_then(|(snapshot, overlay)| match overlay {
-                        ClientShellOverlay::Navigator(navigator) => {
-                            Some(render::client_navigator_rows(snapshot, navigator).len())
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or(0)
-                    .saturating_sub(1);
+                let last = self.overlay.as_ref().and_then(|overlay| match overlay {
+                    ClientShellOverlay::Navigator(navigator) => render::client_navigator_rows(
+                        &self.endpoints,
+                        &self.active_endpoint_id,
+                        navigator,
+                    )
+                    .last()
+                    .map(|row| row.target.clone()),
+                    _ => None,
+                });
                 if let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_mut() {
                     navigator.selected = last;
                 }
@@ -735,7 +758,7 @@ impl ClientShellState {
                 if let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_mut() {
                     navigator.query.clear();
                     navigator.filter = Some(filter);
-                    navigator.selected = 0;
+                    navigator.selected = None;
                 }
                 outcome.repaint = true;
                 return;
@@ -744,7 +767,7 @@ impl ClientShellState {
                 if let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_mut() {
                     navigator.query.clear();
                     navigator.filter = None;
-                    navigator.selected = 0;
+                    navigator.selected = None;
                 }
                 outcome.repaint = true;
                 return;

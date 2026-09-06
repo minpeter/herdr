@@ -13,6 +13,7 @@ pub(crate) struct ResolvedToken {
 pub(crate) enum ResolvedTokenKind {
     StateIcon,
     StateText(String),
+    Machine(String),
     Workspace(String),
     Tab(String),
     Pane(String),
@@ -35,6 +36,7 @@ impl ResolvedToken {
 }
 
 pub(crate) struct AgentTokenContext<'a> {
+    pub(crate) machine: Option<&'a str>,
     pub(crate) workspace: &'a str,
     pub(crate) tab: Option<&'a str>,
     pub(crate) pane: Option<&'a str>,
@@ -63,6 +65,9 @@ pub(crate) fn agent_rows(
                         AgentSidebarToken::StateText => {
                             Some(ResolvedTokenKind::StateText(state_text.to_string()))
                         }
+                        AgentSidebarToken::Machine => context
+                            .machine
+                            .map(|value| ResolvedTokenKind::Machine(value.to_string())),
                         AgentSidebarToken::Workspace => {
                             Some(ResolvedTokenKind::Workspace(context.workspace.to_string()))
                         }
@@ -190,6 +195,7 @@ mod tests {
 
     fn context(entry: &Entry) -> AgentTokenContext<'_> {
         AgentTokenContext {
+            machine: None,
             workspace: &entry.workspace,
             tab: entry.tab.as_deref(),
             pane: entry.pane.as_deref(),
@@ -228,6 +234,35 @@ mod tests {
             vec![ResolvedToken::unstyled(ResolvedTokenKind::Agent(
                 "pi".into()
             ))]
+        );
+    }
+
+    #[test]
+    fn machine_token_only_resolves_for_multi_machine_rows() {
+        let entry = entry();
+        let config = AgentsSidebarConfig {
+            rows: vec![vec![
+                AgentSidebarToken::Machine,
+                AgentSidebarToken::Workspace,
+            ]],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            agent_rows(&config, context(&entry), "working"),
+            vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Workspace(
+                "repo".into()
+            ))]]
+        );
+
+        let mut remote_context = context(&entry);
+        remote_context.machine = Some("Build");
+        assert_eq!(
+            agent_rows(&config, remote_context, "working"),
+            vec![vec![
+                ResolvedToken::unstyled(ResolvedTokenKind::Machine("Build".into())),
+                ResolvedToken::unstyled(ResolvedTokenKind::Workspace("repo".into())),
+            ]]
         );
     }
 

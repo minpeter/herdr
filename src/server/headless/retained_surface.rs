@@ -199,12 +199,14 @@ struct CollectedPanePatch {
     mouse_reporting: bool,
     sgr_pixel_mouse: bool,
     alternate_screen_active: bool,
+    graphics_may_have_placements: bool,
 }
 
 struct RetainedRecipientUpdate {
     client_id: u64,
     surface: protocol::PaneSurfaceFrame,
     patch: protocol::PaneSurfacePatch,
+    graphics_delivery: Option<crate::kitty_graphics::surface::DeliveryCache>,
 }
 
 impl HeadlessServer {
@@ -239,11 +241,20 @@ impl HeadlessServer {
         {
             fallback!("unsafe_state");
         }
-        let targets = render_targets(&self.clients, self.foreground_client_id);
-        if targets.is_empty()
-            || targets
-                .iter()
-                .any(|target| !matches!(target.4, ClientConnectionMode::ClientShell))
+        let mut targets = render_targets(&self.clients, self.foreground_client_id);
+        targets.retain(|(client_id, _, _, _, mode)| {
+            !matches!(mode, ClientConnectionMode::ClientShell)
+                || self
+                    .clients
+                    .get(client_id)
+                    .is_some_and(|client| client.shell_surface_active)
+        });
+        if targets.is_empty() {
+            success!("no_active_surface");
+        }
+        if targets
+            .iter()
+            .any(|target| !matches!(target.4, ClientConnectionMode::ClientShell))
         {
             fallback!("non_shell_target");
         }
@@ -266,8 +277,6 @@ impl HeadlessServer {
                 || surface.frame.height != *rows
                 || surface.popup.is_some()
                 || !surface.graphics.assets.is_empty()
-                || !surface.graphics.placements.is_empty()
-                || !surface.graphics.retained_assets.is_empty()
                 || !surface.frame.graphics.is_empty()
             {
                 fallback!("baseline_mismatch");
@@ -325,6 +334,8 @@ impl HeadlessServer {
                     fallback!("terminal_patch");
                 }
             };
+            let graphics_may_have_placements =
+                crate::kitty_graphics::is_enabled() && runtime.kitty_graphics_may_have_placements();
             let revision = runtime.content_seq();
             if revision != revision_before || !revision.is_multiple_of(2) {
                 fallback!("content_changed");
@@ -337,6 +348,7 @@ impl HeadlessServer {
                 mouse_reporting: runtime.mouse_reporting_enabled(),
                 sgr_pixel_mouse: runtime.sgr_pixel_mouse_enabled(),
                 alternate_screen_active: runtime.alternate_screen_active(),
+                graphics_may_have_placements,
             });
         }
 
@@ -349,6 +361,8 @@ impl HeadlessServer {
             let mut changed_panes = Vec::with_capacity(collected.len());
             let mut patch_rows = Vec::new();
             let mut metadata_changed = false;
+            let mut refresh_graphics = !surface.graphics.placements.is_empty()
+                || !surface.graphics.retained_assets.is_empty();
             for collected_pane in &collected {
                 let Some(pane) = surface
                     .panes
@@ -370,6 +384,7 @@ impl HeadlessServer {
                 ) {
                     fallback!("hyperlink");
                 }
+                refresh_graphics |= collected_pane.graphics_may_have_placements;
                 let previous_pane = pane.clone();
                 let Some(rows) =
                     apply_rows(&mut surface.frame, pane.inner_rect, &collected_pane.patch)
@@ -405,7 +420,31 @@ impl HeadlessServer {
             let cursor = retained_cursor(&self.app, &surface.panes);
             let cursor_changed = cursor != surface.frame.cursor;
             surface.frame.cursor = cursor.clone();
-            if patch_rows.is_empty() && !cursor_changed && !metadata_changed {
+            let mut graphics_changed = false;
+            let graphics_delivery = if refresh_graphics {
+                let Some(target) = self.shell_target_for_client(client_id) else {
+                    fallback!("graphics_target");
+                };
+                let client = &self.clients[&client_id];
+                let Some((graphics, delivery)) =
+                    crate::server::client_shell_graphics::collect_retained(
+                        &self.app,
+                        &surface,
+                        target,
+                        client.cell_size,
+                        &client.shell_graphics_delivery,
+                        client_id,
+                    )
+                else {
+                    fallback!("graphics_geometry");
+                };
+                graphics_changed = graphics != surface.graphics;
+                surface.graphics = graphics;
+                Some(delivery)
+            } else {
+                None
+            };
+            if patch_rows.is_empty() && !cursor_changed && !metadata_changed && !graphics_changed {
                 continue;
             }
             let patch = protocol::PaneSurfacePatch {
@@ -421,6 +460,7 @@ impl HeadlessServer {
                 client_id,
                 surface,
                 patch,
+                graphics_delivery,
             });
         }
         if updates.is_empty() {
@@ -435,6 +475,7 @@ impl HeadlessServer {
                 client_id,
                 surface,
                 patch,
+                graphics_delivery,
             } = update;
             let Some(client) = self.clients.get_mut(&client_id) else {
                 continue;
@@ -444,31 +485,53 @@ impl HeadlessServer {
                 deferred += 1;
                 continue;
             };
-            let Some(prepared) = client
-                .render_state
-                .prepare_pane_surface_patch(patch, surface)
-            else {
+            // The published row patch cannot carry images. Reuse the retained text/layout
+            // in a graphics-capable surface message rather than invoking the full renderer.
+            let prepared = if graphics_delivery.is_some() {
+                client.render_state.prepare_pane_surface(surface)
+            } else {
+                client
+                    .render_state
+                    .prepare_pane_surface_patch(patch, surface)
+            };
+            let Some(prepared) = prepared else {
                 client.defer_full_render();
                 deferred += 1;
                 continue;
             };
-            let serialized = match Self::frame_server_message(prepared.message()) {
-                Ok(serialized) => serialized,
-                Err(error) => {
-                    warn!(
-                        client_id,
-                        %error,
-                        "failed to serialize retained pane surface patch"
-                    );
-                    client.defer_full_render();
-                    deferred += 1;
-                    continue;
-                }
+            let max_frame_size = if graphics_delivery.is_some() {
+                MAX_GRAPHICS_FRAME_SIZE
+            } else {
+                protocol::MAX_FRAME_SIZE
             };
+            let serialized =
+                match Self::frame_server_message_with_max(prepared.message(), max_frame_size) {
+                    Ok(serialized) => serialized,
+                    Err(error) => {
+                        warn!(
+                            client_id,
+                            %error,
+                            "failed to serialize retained pane surface patch"
+                        );
+                        client.defer_full_render();
+                        deferred += 1;
+                        continue;
+                    }
+                };
             crate::render_prof::counter("retained_surface.bytes", serialized.len() as u64);
             match writer.render.try_send(serialized) {
                 Ok(()) => {
-                    client.clear_deferred_render();
+                    let graphics_pending = graphics_delivery
+                        .as_ref()
+                        .is_some_and(crate::kitty_graphics::surface::DeliveryCache::has_pending);
+                    if let Some(delivery) = graphics_delivery {
+                        client.shell_graphics_delivery = delivery;
+                    }
+                    if graphics_pending {
+                        client.defer_full_render();
+                    } else {
+                        client.clear_deferred_render();
+                    }
                     client.render_state.commit_sent_frame(prepared);
                     sent += 1;
                 }

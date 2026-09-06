@@ -147,6 +147,9 @@ impl ClientShellState {
                     }
                     return;
                 }
+                if self.handle_endpoint_navigation(action, outcome) {
+                    return;
+                }
                 if let Some(method) = self.endpoint_method_for_action(action) {
                     self.push_endpoint_method(method, outcome);
                     return;
@@ -244,15 +247,7 @@ impl ClientShellState {
         }
     }
 
-    pub(super) fn request_selection_copy(&mut self, outcome: &mut ClientShellInput) {
-        self.request_selection_copy_with_fallback(outcome, None);
-    }
-
-    pub(super) fn request_selection_copy_with_fallback(
-        &mut self,
-        outcome: &mut ClientShellInput,
-        fallback_key: Option<crate::input::TerminalKey>,
-    ) {
+    pub(super) fn request_selection_copy(&mut self, outcome: &mut ClientShellInput, live: bool) {
         let Some(selection) = self.selection.as_ref() else {
             return;
         };
@@ -261,29 +256,11 @@ impl ClientShellState {
             .pane_surface
             .as_ref()
             .and_then(|surface| surface.panes.iter().find(|pane| pane.pane_id == pane_id))
-            .map(|pane| pane.content_revision);
+            .map(|pane| pane.content_revision)
+            // Read a manual mouse selection atomically from the live terminal. Output
+            // between the displayed frame and this request must not reject the copy.
+            .filter(|_| !live);
         let (anchor, cursor) = selection.ordered_cells();
-        let fallback = fallback_key.and_then(|key| {
-            let press = ClientPaneInputEvent::from_terminal_key(key.clone())?;
-            let tracks_release = matches!(
-                &press,
-                ClientPaneInputEvent::Key {
-                    tracks_release: true,
-                    ..
-                }
-            );
-            let mut message =
-                super::target_event_message(ClientInputTarget::Pane(pane_id.clone()), press);
-            if tracks_release {
-                let release = ClientPaneInputEvent::from_terminal_key(
-                    key.with_kind(crossterm::event::KeyEventKind::Release),
-                )?;
-                if let ClientMessage::ClientShellPaneInput { events, .. } = &mut message {
-                    events.push(release);
-                }
-            }
-            Some(message)
-        });
         self.push_endpoint_method_with_kind(
             crate::api::schema::Method::PaneSelectionRead(
                 crate::api::schema::PaneSelectionReadParams {
@@ -299,7 +276,7 @@ impl ClientShellState {
                     content_revision,
                 },
             ),
-            PendingEndpointKind::SelectionCopy { fallback },
+            PendingEndpointKind::SelectionCopy,
             outcome,
         );
     }
@@ -408,7 +385,9 @@ impl ClientShellState {
         kind: PendingEndpointKind,
         outcome: &mut ClientShellInput,
     ) -> bool {
-        if self.snapshot.is_none() {
+        if !self.endpoint_is_online(&self.active_endpoint_id) {
+            let label = self.active_endpoint_label().to_owned();
+            outcome.repaint |= self.receive_endpoint_unavailable(format!("{label} is not ready"));
             return false;
         }
         let method_name = crate::api::api_method_name(&method).to_owned();
@@ -423,7 +402,9 @@ impl ClientShellState {
             );
             return false;
         }
-        let snapshot = self.snapshot.as_deref().expect("checked snapshot");
+        let Some(snapshot) = self.snapshot.as_deref() else {
+            return false;
+        };
         let confirmation_workspace_id = match &method {
             crate::api::schema::Method::TabClose(target) => snapshot
                 .tabs
@@ -450,6 +431,7 @@ impl ClientShellState {
             },
         );
         outcome.actions.push(ClientShellAction::Endpoint {
+            endpoint_id: self.active_endpoint_id.clone(),
             boot_id: snapshot.boot_id.clone(),
             request: Box::new(crate::api::schema::Request {
                 id: request_id,
@@ -466,6 +448,58 @@ impl ClientShellState {
             "Paste rejected",
             message,
         )
+    }
+
+    pub(crate) fn receive_endpoint_unavailable(&mut self, message: String) -> bool {
+        self.push_endpoint_notice(
+            ClientEndpointNoticeKind::Unavailable,
+            message.clone(),
+            "Endpoint unavailable",
+            message,
+        )
+    }
+
+    pub(crate) fn focus_endpoint_target(
+        &mut self,
+        target: ClientEndpointFocusTarget,
+    ) -> Vec<ClientShellAction> {
+        let method = match target {
+            ClientEndpointFocusTarget::Workspace(workspace_id) => {
+                crate::api::schema::Method::WorkspaceFocus(crate::api::schema::WorkspaceTarget {
+                    workspace_id,
+                })
+            }
+            ClientEndpointFocusTarget::Tab(tab_id) => {
+                crate::api::schema::Method::TabFocus(crate::api::schema::TabTarget { tab_id })
+            }
+            ClientEndpointFocusTarget::Pane(pane_id) => {
+                crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget { pane_id })
+            }
+        };
+        let mut outcome = ClientShellInput::default();
+        self.push_endpoint_method(method, &mut outcome);
+        outcome.actions
+    }
+
+    pub(crate) fn cancel_endpoint_request(&mut self, request_id: &str) -> bool {
+        let Some(pending) = self.pending_requests.get(request_id) else {
+            return false;
+        };
+        let boot_id = pending.boot_id.clone();
+        let (repaint, actions) = self.handle_endpoint_result(
+            &boot_id,
+            request_id,
+            Err(ClientShellEndpointError {
+                code: Some("endpoint_cancelled".into()),
+                message: "This server action was interrupted. Check its state before retrying."
+                    .into(),
+            }),
+        );
+        debug_assert!(
+            actions.is_empty(),
+            "cancellation must not start another action"
+        );
+        repaint
     }
 
     pub(crate) fn handle_endpoint_result(
@@ -505,6 +539,12 @@ impl ClientShellState {
                         pending.method_name.clone(),
                         "Server timed out",
                         format!("This server did not respond to {}.", pending.method_name),
+                    ),
+                    "endpoint_cancelled" => (
+                        ClientEndpointNoticeKind::Unavailable,
+                        "cancelled".to_owned(),
+                        "Action interrupted",
+                        error.message.clone(),
                     ),
                     "server_unavailable" => (
                         ClientEndpointNoticeKind::Unavailable,
@@ -588,13 +628,7 @@ impl ClientShellState {
                 let repaint = self.complete_pane_scroll(pane_id, serial, result, &mut outcome);
                 return (repaint, outcome.actions);
             }
-            PendingEndpointKind::SelectionCopy { fallback } => {
-                let fallback = || {
-                    fallback
-                        .map(ClientShellAction::Request)
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                };
+            PendingEndpointKind::SelectionCopy => {
                 return match result {
                     Ok(crate::api::schema::ResponseResult::PaneSelection { text, .. })
                         if !text.is_empty() =>
@@ -606,14 +640,14 @@ impl ClientShellState {
                         )
                     }
                     Ok(crate::api::schema::ResponseResult::PaneSelection { .. }) => {
-                        (false, fallback())
+                        (false, Vec::new())
                     }
                     Ok(_) => {
                         self.endpoint_error =
                             Some("endpoint returned an unexpected selection result".to_owned());
-                        (true, fallback())
+                        (true, Vec::new())
                     }
-                    Err(_) => (true, fallback()),
+                    Err(_) => (true, Vec::new()),
                 };
             }
             PendingEndpointKind::WordSelection {
@@ -669,7 +703,7 @@ impl ClientShellState {
                 self.selection_highlight_clear_deadline =
                     Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
                 let mut outcome = ClientShellInput::default();
-                self.request_selection_copy(&mut outcome);
+                self.request_selection_copy(&mut outcome, false);
                 return (true, outcome.actions);
             }
             PendingEndpointKind::PaneLinkActivate {
@@ -724,7 +758,7 @@ impl ClientShellState {
                     Err(error)
                         if matches!(
                             error.code.as_deref(),
-                            Some("stale_content" | "stale_target")
+                            Some("stale_content" | "stale_target" | "endpoint_cancelled")
                         ) =>
                     {
                         self.url_click_consumes_until_up = completed_before_release;

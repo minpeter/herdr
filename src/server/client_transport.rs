@@ -124,6 +124,11 @@ pub(crate) struct ClientWriter {
 }
 
 impl ClientWriter {
+    /// Drops render-lane work that has not yet been claimed by the writer.
+    pub(crate) fn discard_pending_render(&self) {
+        self.render.queue.discard_pending_render();
+    }
+
     #[cfg(test)]
     pub(crate) fn test_fill_render(&self, data: Vec<u8>) {
         self.render.try_send(data).unwrap();
@@ -304,6 +309,13 @@ impl ClientWriterQueue {
         Ok(())
     }
 
+    fn discard_pending_render(&self) {
+        let mut state = self.lock_state();
+        state.render = None;
+        state.ordered.clear();
+        self.ready.notify_all();
+    }
+
     fn send_ordered(&self, data: Vec<u8>) -> Result<(), TrySendError<Vec<u8>>> {
         let mut state = self.lock_state();
         if !state.writer_alive {
@@ -382,6 +394,7 @@ pub(crate) enum ServerEvent {
         direct_graphics: bool,
         endpoint_keybindings: bool,
         mouse_capture: bool,
+        surface_active: bool,
         writer: ClientWriter,
     },
     /// A client sent an input message.
@@ -483,6 +496,8 @@ pub(crate) enum ServerEvent {
     ClientShellFocus { client_id: u64, focused: bool },
     /// A client-owned shell updated its local mouse-capture preference.
     ClientShellMouseCapture { client_id: u64, enabled: bool },
+    /// The committed shell asks the server to replay presentation effects before input resumes.
+    ClientShellPresentationSync { client_id: u64, token: String },
     /// A client-owned shell invoked one endpoint operation through this connection.
     ClientShellEndpointRequest {
         client_id: u64,
@@ -744,6 +759,7 @@ pub(crate) fn handle_client_handshake(
                     hello.direct_graphics,
                     hello.endpoint_keybindings,
                     hello.mouse_capture,
+                    hello.surface_active,
                 )),
             )
         }
@@ -831,33 +847,39 @@ pub(crate) fn handle_client_handshake(
     }
 
     // Notify the main loop about the new client.
-    let connected =
-        if let Some((pixel_mouse, direct_graphics, endpoint_keybindings, mouse_capture)) =
-            shell_options
-        {
-            ServerEvent::ClientShellConnected {
-                client_id,
-                surface_cols: client_cols,
-                surface_rows: client_rows,
-                cell_width_px,
-                cell_height_px,
-                pixel_mouse,
-                direct_graphics,
-                endpoint_keybindings,
-                mouse_capture,
-                writer,
-            }
-        } else {
-            ServerEvent::ClientConnected {
-                client_id,
-                cols: client_cols,
-                rows: client_rows,
-                cell_width_px,
-                cell_height_px,
-                pixel_mouse: terminal_pixel_mouse,
-                writer,
-            }
-        };
+    let endpoint_control_writer = shell_options.as_ref().map(|_| writer.control.clone());
+    let connected = if let Some((
+        pixel_mouse,
+        direct_graphics,
+        endpoint_keybindings,
+        mouse_capture,
+        surface_active,
+    )) = shell_options
+    {
+        ServerEvent::ClientShellConnected {
+            client_id,
+            surface_cols: client_cols,
+            surface_rows: client_rows,
+            cell_width_px,
+            cell_height_px,
+            pixel_mouse,
+            direct_graphics,
+            endpoint_keybindings,
+            mouse_capture,
+            surface_active,
+            writer,
+        }
+    } else {
+        ServerEvent::ClientConnected {
+            client_id,
+            cols: client_cols,
+            rows: client_rows,
+            cell_width_px,
+            cell_height_px,
+            pixel_mouse: terminal_pixel_mouse,
+            writer,
+        }
+    };
     if let Err(err) = server_event_tx.blocking_send(connected) {
         match err.0 {
             ServerEvent::ClientConnected { writer, .. }
@@ -869,7 +891,13 @@ pub(crate) fn handle_client_handshake(
     }
 
     // Enter read loop — read client messages and forward to main loop.
-    client_read_loop(stream, client_id, server_event_tx, should_quit)
+    client_read_loop_with_endpoint_controls(
+        stream,
+        client_id,
+        server_event_tx,
+        should_quit,
+        endpoint_control_writer.as_ref(),
+    )
 }
 
 fn send_shutdown_to_unregistered_client(writer: &ClientWriter) {
@@ -924,11 +952,22 @@ fn write_framed_bytes(stream: &mut LocalStream, data: &[u8]) -> bool {
 }
 
 /// The client read loop — reads messages from the client and forwards to the server event channel.
+#[cfg(test)]
 fn client_read_loop(
+    stream: LocalStream,
+    client_id: u64,
+    server_event_tx: &mpsc::Sender<ServerEvent>,
+    should_quit: &Arc<AtomicBool>,
+) -> io::Result<()> {
+    client_read_loop_with_endpoint_controls(stream, client_id, server_event_tx, should_quit, None)
+}
+
+fn client_read_loop_with_endpoint_controls(
     mut stream: LocalStream,
     client_id: u64,
     server_event_tx: &mpsc::Sender<ServerEvent>,
     should_quit: &Arc<AtomicBool>,
+    endpoint_control_writer: Option<&ClientControlWriter>,
 ) -> io::Result<()> {
     while !should_quit.load(Ordering::Acquire) {
         let msg: ClientMessage = match protocol::read_message(&mut stream, MAX_GRAPHICS_FRAME_SIZE)
@@ -1242,8 +1281,29 @@ fn client_read_loop(
                     },
                 }
             }
-            ClientMessage::EndpointControl { kind, .. } => {
-                debug!(client_id, %kind, "ignoring unknown endpoint control message");
+            ClientMessage::EndpointControl { kind, data }
+                if kind == crate::protocol::endpoint::PRESENTATION_EFFECTS_SYNC_KIND =>
+            {
+                ServerEvent::ClientShellPresentationSync {
+                    client_id,
+                    token: data,
+                }
+            }
+            ClientMessage::EndpointControl { kind, data } => {
+                let Some(response) = crate::server::client_endpoint_control::response(&kind, data)
+                else {
+                    debug!(client_id, %kind, "ignoring unknown endpoint control message");
+                    continue;
+                };
+                let Some(writer) = endpoint_control_writer else {
+                    continue;
+                };
+                let mut framed = Vec::new();
+                if protocol::write_message(&mut framed, &response).is_err()
+                    || writer.send(framed).is_err()
+                {
+                    break;
+                }
                 continue;
             }
             ClientMessage::Detach => {
@@ -1356,6 +1416,7 @@ mod tests {
             direct_graphics: true,
             endpoint_keybindings: true,
             mouse_capture: true,
+            surface_active: true,
             snapshot_codecs: vec![crate::protocol::endpoint::SNAPSHOT_CODEC_V1.into()],
             surface_codecs: vec![crate::protocol::endpoint::SURFACE_CODEC_V1.into()],
             input_codecs: vec![crate::protocol::endpoint::INPUT_CODEC_V1.into()],
@@ -1767,6 +1828,7 @@ mod tests {
                 direct_graphics,
                 endpoint_keybindings,
                 mouse_capture,
+                surface_active,
                 writer,
             } => {
                 assert_eq!(client_id, 43);
@@ -1776,6 +1838,7 @@ mod tests {
                 assert!(direct_graphics);
                 assert!(endpoint_keybindings);
                 assert!(mouse_capture);
+                assert!(surface_active);
                 drop(writer);
             }
             other => panic!("expected ClientShellConnected, got {other:?}"),

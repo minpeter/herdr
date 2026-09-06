@@ -69,6 +69,8 @@ fn default_capabilities() -> Option<ServerCapabilities> {
         live_handoff: crate::platform::capabilities().live_handoff,
         detached_server_daemon: crate::platform::current_process_is_detached_server_daemon(),
         endpoint_protocol_generation: Some(crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION),
+        surface_interest: true,
+        health_check: true,
     })
 }
 
@@ -352,6 +354,14 @@ fn handle_request(
         });
     }
 
+    if matches!(&request.method, Method::ClientShellSurfaceSet(_)) {
+        return error_response_json(
+            request.id,
+            "connection_local_only",
+            "client_shell.surface.set is only available through a client shell endpoint".into(),
+        );
+    }
+
     if matches!(&request.method, Method::ServerStop(_)) {
         if let Some(server_stop) = server_stop {
             server_stop.store(true, Ordering::Release);
@@ -386,6 +396,7 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
         Method::CommandInvoke(_) => "command.invoke",
         Method::ClientWindowTitleSet(_) => "client.window_title.set",
         Method::ClientWindowTitleClear(_) => "client.window_title.clear",
+        Method::ClientShellSurfaceSet(_) => "client_shell.surface.set",
         Method::SessionSnapshot(_) => "session.snapshot",
         Method::WorkspaceCreate(_) => "workspace.create",
         Method::WorkspaceList(_) => "workspace.list",
@@ -1136,6 +1147,8 @@ mod tests {
                 endpoint_protocol_generation: Some(
                     crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION,
                 ),
+                surface_interest: true,
+                health_check: true,
             }),
             None,
             None,

@@ -348,7 +348,7 @@ status_indicators = "symbols"
 [ui.sidebar.agents]
 row_gap = 0
 rows = [
-  ["state_icon", "workspace", "tab"],
+  ["state_icon", "machine", "workspace", "tab"],
   ["agent"],
 ]
 
@@ -364,6 +364,7 @@ Agent 行支持以下内置 token：
 
 - `state_icon` — 智能体语义状态的彩色图标。
 - `state_text` — `idle`、`working`、`blocked`、`done` 或 `unknown`；如果报告中包含显示标签，也会一并显示。
+- `machine` — 客户端连接多台机器时显示机器标签；只有一台本地机器时省略。
 - `workspace` — 工作区名称。
 - `tab` — 标签页名称（如有）。
 - `pane` — 窗格名称（如有）。
@@ -381,7 +382,7 @@ Space 行支持以下内置 token：
 - `git_status` — 非零时显示 Git ahead 和 behind 数量。
 - `$name` — 名为 `name` 的自定义工作区元数据。
 
-token 会按配置顺序渲染。Herdr 通常使用 ` · ` 分隔相邻值，并在 `state_icon` 后使用一个空格。缺失值及其分隔符会消失；当一行中的所有 token 都没有值时，该行会消失。每个布局最多可包含 16 行，每行最多可包含 16 个 token。
+token 会按配置顺序渲染。Herdr 通常使用 ` · ` 分隔相邻值，并在 `state_icon` 后使用一个空格。缺失值及其分隔符会消失；当一行中的所有 token 都没有值时，该行会消失。已有的自定义行不会改变；如果希望在自定义的多机器布局中显示机器标识，请显式添加 `machine`。每个布局最多可包含 16 行，每行最多可包含 16 个 token。
 
 也可以用内联样式表定义 token：
 

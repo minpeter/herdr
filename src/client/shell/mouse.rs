@@ -466,6 +466,9 @@ impl ClientShellState {
         if self.hits.workspace_body.height == 0
             || point.1 < self.hits.workspace_body.y.saturating_sub(1)
             || point.1 >= self.hits.new_workspace.y
+            || self.hits.workspaces.iter().any(|hit| {
+                hit.endpoint_id != self.active_endpoint_id && super::contains(hit.rect, point)
+            })
         {
             return None;
         }
@@ -473,12 +476,17 @@ impl ClientShellState {
             .hits
             .workspaces
             .iter()
-            .filter(|hit| !hit.indented)
+            .filter(|hit| hit.endpoint_id == self.active_endpoint_id && !hit.indented)
             .map(|hit| (Some(hit.workspace_id.clone()), hit.rect.y.saturating_sub(1)))
             .collect::<Vec<_>>();
         let snapshot = self.snapshot.as_deref()?;
         let entries = render::workspace_entries(snapshot, &self.collapsed_groups);
-        let last_hit = self.hits.workspaces.last()?;
+        let last_hit = self
+            .hits
+            .workspaces
+            .iter()
+            .rev()
+            .find(|hit| hit.endpoint_id == self.active_endpoint_id)?;
         let last_position = entries.iter().position(|entry| {
             snapshot
                 .workspaces
@@ -1109,21 +1117,7 @@ impl ClientShellState {
                     .max(mouse.row.abs_diff(press.start_row));
                 if delta >= 1 {
                     let source_workspace_id = press.workspace_id.clone();
-                    let draggable = self
-                        .snapshot
-                        .as_deref()
-                        .and_then(|snapshot| {
-                            snapshot
-                                .workspaces
-                                .iter()
-                                .find(|workspace| workspace.workspace_id == source_workspace_id)
-                        })
-                        .is_some_and(|workspace| {
-                            !workspace
-                                .worktree
-                                .as_ref()
-                                .is_some_and(|worktree| worktree.is_linked_worktree)
-                        });
+                    let draggable = self.endpoint_workspace_is_draggable(press);
                     if draggable {
                         if let Some(target) = self.workspace_drop_target_at(point) {
                             self.chrome_drag = Some(ClientChromeDrag::Workspace {
@@ -1268,14 +1262,7 @@ impl ClientShellState {
                 return;
             }
             if let Some(press) = self.workspace_press.take() {
-                self.push_endpoint_method(
-                    crate::api::schema::Method::WorkspaceFocus(
-                        crate::api::schema::WorkspaceTarget {
-                            workspace_id: press.workspace_id,
-                        },
-                    ),
-                    outcome,
-                );
+                self.finish_endpoint_workspace_press(press, outcome);
                 return;
             }
             if let Some(press) = self.tab_press.take() {
@@ -1552,14 +1539,14 @@ impl ClientShellState {
                 .navigator_rows
                 .iter()
                 .find(|(rect, _)| super::contains(*rect, point))
-                .copied();
+                .cloned();
             match mouse.kind {
                 MouseEventKind::Moved => {
-                    if let Some((_, index)) = row_hit {
+                    if let Some((_, target)) = row_hit {
                         if let Some(ClientShellOverlay::Navigator(navigator)) =
                             self.overlay.as_mut()
                         {
-                            navigator.selected = index;
+                            navigator.selected = Some(target);
                         }
                         outcome.repaint = true;
                     }
@@ -1573,30 +1560,13 @@ impl ClientShellState {
                             navigator.filter = None;
                         }
                         outcome.repaint = true;
-                    } else if let Some((rect, index)) = row_hit {
+                    } else if let Some((rect, target)) = row_hit {
                         if let Some(ClientShellOverlay::Navigator(navigator)) =
                             self.overlay.as_mut()
                         {
-                            navigator.selected = index;
+                            navigator.selected = Some(target.clone());
                         }
-                        let workspace = self
-                            .snapshot
-                            .as_deref()
-                            .zip(self.overlay.as_ref())
-                            .and_then(|(snapshot, overlay)| match overlay {
-                                ClientShellOverlay::Navigator(navigator) => {
-                                    render::client_navigator_rows(snapshot, navigator)
-                                        .get(index)
-                                        .map(|row| {
-                                            matches!(
-                                                row.target,
-                                                ClientNavigatorTarget::Workspace(_)
-                                            )
-                                        })
-                                }
-                                _ => None,
-                            })
-                            .unwrap_or(false);
+                        let workspace = matches!(target, ClientNavigatorTarget::Workspace { .. });
                         if workspace && mouse.column <= rect.x.saturating_add(3) {
                             self.toggle_selected_navigator_workspace();
                             outcome.repaint = true;
@@ -1679,7 +1649,7 @@ impl ClientShellState {
                 .as_mut()
                 .is_some_and(crate::selection::Selection::finish);
             if copied && self.config.copy_on_select {
-                self.request_selection_copy(outcome);
+                self.request_selection_copy(outcome, false);
                 self.selection = None;
             } else if !copied {
                 self.selection = None;
@@ -1749,13 +1719,7 @@ impl ClientShellState {
                     return;
                 }
                 let workspace_id = (!self.sidebar_collapsed)
-                    .then(|| {
-                        self.hits
-                            .workspaces
-                            .iter()
-                            .find(|hit| super::contains(hit.rect, point))
-                            .map(|hit| hit.workspace_id.clone())
-                    })
+                    .then(|| self.active_endpoint_workspace_at(point))
                     .flatten();
                 if let Some(workspace_id) = workspace_id {
                     self.open_workspace_context_menu(workspace_id, mouse.column, mouse.row);
@@ -1949,6 +1913,9 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                if self.handle_endpoint_machine_click(point, outcome) {
+                    return;
+                }
                 if super::contains(self.hits.global_launcher, point) {
                     self.toggle_global_menu();
                     outcome.repaint = true;
@@ -2023,6 +1990,7 @@ impl ClientShellState {
                     .iter()
                     .find(|hit| super::contains(hit.rect, point))
                     .map(|hit| ClientWorkspacePress {
+                        endpoint_id: hit.endpoint_id.clone(),
                         workspace_id: hit.workspace_id.clone(),
                         start_column: mouse.column,
                         start_row: mouse.row,
@@ -2057,6 +2025,9 @@ impl ClientShellState {
                     .flatten();
                 if let Some(tab_press) = tab_press {
                     self.tab_press = Some(tab_press);
+                    return;
+                }
+                if self.handle_endpoint_agent_click(point, outcome) {
                     return;
                 }
                 let agent_pane_id = self

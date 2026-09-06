@@ -313,6 +313,9 @@ impl ClientShellState {
                 (true, Vec::new())
             }
             PendingEndpointKind::IntegrationInstall => {
+                let cancelled = result
+                    .as_ref()
+                    .is_err_and(|error| error.code.as_deref() == Some("endpoint_cancelled"));
                 self.pending_integration_installs =
                     self.pending_integration_installs.saturating_sub(1);
                 if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
@@ -328,7 +331,8 @@ impl ClientShellState {
                     }
                     settings.installing_integrations = self.pending_integration_installs > 0;
                 }
-                let actions = if self.pending_integration_installs == 0
+                let actions = if !cancelled
+                    && self.pending_integration_installs == 0
                     && matches!(self.overlay, Some(ClientShellOverlay::Settings(_)))
                 {
                     let mut deferred = ClientShellInput::default();

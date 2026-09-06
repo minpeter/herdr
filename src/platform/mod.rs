@@ -43,6 +43,15 @@ pub(crate) fn prepare_paste_text_for_pty(text: String) -> String {
     prepare_paste_text_for_pty_platform(text)
 }
 
+pub(crate) fn plugin_runtime_path(path: &std::path::Path) -> std::path::PathBuf {
+    plugin_runtime_path_platform(path)
+}
+
+#[cfg(not(windows))]
+fn plugin_runtime_path_platform(path: &std::path::Path) -> std::path::PathBuf {
+    path.to_path_buf()
+}
+
 #[cfg(not(windows))]
 fn prepare_paste_text_for_pty_platform(text: String) -> String {
     text
@@ -227,13 +236,8 @@ mod unix_common;
 #[cfg(unix)]
 pub(crate) use unix_common::{begin_cli_output, end_cli_output};
 
-#[cfg(not(windows))]
-pub(crate) fn replace_file(
-    source: &std::path::Path,
-    destination: &std::path::Path,
-) -> std::io::Result<()> {
-    std::fs::rename(source, destination)
-}
+mod client_state;
+pub(crate) use client_state::{create_private_state_file, replace_file, sync_parent_directory};
 
 #[cfg(not(unix))]
 pub(crate) fn begin_cli_output() {}

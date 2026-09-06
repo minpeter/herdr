@@ -255,6 +255,7 @@ struct ClientStatusJson {
     channel: &'static str,
     protocol: u32,
     endpoint_protocol_generation: u32,
+    endpoint_capabilities: Vec<&'static str>,
     binary: String,
     session: Option<String>,
 }
@@ -279,6 +280,8 @@ struct ServerCapabilitiesJson {
     live_handoff: bool,
     detached_server_daemon: bool,
     endpoint_protocol_generation: Option<u32>,
+    surface_interest: bool,
+    health_check: bool,
 }
 
 #[derive(Serialize)]
@@ -293,6 +296,11 @@ fn client_status_json() -> ClientStatusJson {
         channel: crate::config::Config::load().config.update.channel.as_str(),
         protocol: crate::protocol::PROTOCOL_VERSION,
         endpoint_protocol_generation: crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION,
+        endpoint_capabilities: vec![
+            crate::protocol::endpoint::SURFACE_INTEREST_CAPABILITY,
+            crate::protocol::endpoint::PRESENTATION_EFFECTS_FENCE_CAPABILITY,
+            crate::protocol::endpoint::HEALTH_CHECK_CAPABILITY,
+        ],
         binary: current_exe_label(),
         session: crate::session::active_name(),
     }
@@ -315,6 +323,8 @@ fn server_status_json(server: &ServerRuntimeStatus) -> ServerStatusJson {
                     live_handoff: capabilities.live_handoff,
                     detached_server_daemon: capabilities.detached_server_daemon,
                     endpoint_protocol_generation: capabilities.endpoint_protocol_generation,
+                    surface_interest: capabilities.surface_interest,
+                    health_check: capabilities.health_check,
                 }),
             compatible: protocol.map(|value| value == crate::protocol::PROTOCOL_VERSION),
             endpoint_compatible: capabilities.as_ref().and_then(|capabilities| {
@@ -404,6 +414,8 @@ mod tests {
                 live_handoff: true,
                 detached_server_daemon: true,
                 endpoint_protocol_generation: endpoint_generation,
+                surface_interest: true,
+                health_check: true,
             }),
         }
     }

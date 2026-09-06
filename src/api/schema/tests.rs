@@ -725,6 +725,8 @@ fn success_response_round_trips() {
                 live_handoff: true,
                 detached_server_daemon: true,
                 endpoint_protocol_generation: Some(1),
+                surface_interest: true,
+                health_check: true,
             }),
         },
     };

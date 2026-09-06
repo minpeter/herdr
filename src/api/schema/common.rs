@@ -61,6 +61,12 @@ pub struct ClientWindowTitleSetParams {
     pub title: String,
 }
 
+/// Updates whether the requesting client shell receives and controls pane presentation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ClientShellSurfaceSetParams {
+    pub active: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SplitDirection {

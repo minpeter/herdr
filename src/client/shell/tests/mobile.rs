@@ -30,6 +30,7 @@ fn navigate_update_status_uses_released_desktop_and_mobile_placement() {
 
     state.config.tab_bar_position = crate::config::TabBarPositionConfig::Top;
     state.visible_notification = Some(ClientVisibleNotification {
+        endpoint_id: ClientEndpointId::Local,
         event: SemanticNotification {
             kind: SemanticNotificationKind::Custom,
             title: "bottom notification".into(),
@@ -66,6 +67,74 @@ fn mobile_layout_reserves_only_client_header() {
         state.surface_size(44, 20),
         ClientSurfaceSize { cols: 44, rows: 18 }
     );
+}
+
+#[test]
+fn mobile_switcher_can_activate_an_online_saved_machine() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let profile = crate::client::endpoint::SavedSshEndpoint {
+        id: crate::client::endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+        label: "Build".into(),
+        target: "build".into(),
+        session: "agents".into(),
+        enabled: true,
+    };
+    let endpoint_id = ClientEndpointId::Ssh(profile.id.clone());
+    state.set_endpoint_catalog(&[profile]);
+    state.set_endpoint_status(&endpoint_id, ClientEndpointStatus::Online);
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let mut remote = snapshot();
+    remote.boot_id = "remote-boot".into();
+    state.set_endpoint_snapshot(&endpoint_id, Box::new(remote));
+    state.mode = ClientShellMode::Navigate;
+
+    let frame = state.compose(44, 30).expect("mobile machine switcher");
+    let text = frame
+        .cells
+        .iter()
+        .map(|cell| cell.symbol.as_str())
+        .collect::<String>();
+    assert!(text.contains("machines"));
+    assert!(text.contains("Build"));
+    let machine = state
+        .hits
+        .mobile_targets
+        .iter()
+        .find_map(|(rect, target)| {
+            matches!(target, ClientMobileTarget::Machine(id) if id == &endpoint_id).then_some(*rect)
+        })
+        .expect("saved machine target");
+    let outcome = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: machine.x,
+        row: machine.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(matches!(
+        outcome.actions.as_slice(),
+        [ClientShellAction::ActivateEndpoint {
+            endpoint_id: activated,
+            target: None,
+        }] if activated == &endpoint_id
+    ));
+
+    state.set_endpoint_status(&endpoint_id, ClientEndpointStatus::Online);
+    assert!(state.activate_endpoint_projection(&endpoint_id));
+    let mut remote_surface = surface();
+    remote_surface.boot_id = "remote-boot".into();
+    state.set_pane_surface(remote_surface);
+    state.mark_endpoint_disconnected(&endpoint_id);
+    state.receive_endpoint_unavailable("network lost".into());
+    state.mode = ClientShellMode::Navigate;
+    let stale = state.compose(44, 30).expect("stale mobile switcher");
+    let text = stale
+        .cells
+        .iter()
+        .map(|cell| cell.symbol.as_str())
+        .collect::<String>();
+    assert!(text.contains("reconnecting"), "frame: {text}");
+    assert!(text.contains("network lost"), "frame: {text}");
 }
 
 #[test]
@@ -175,7 +244,11 @@ fn mobile_header_and_switcher_render_released_sections_and_stable_targets() {
         .mobile_targets
         .iter()
         .find_map(|(rect, target)| {
-            matches!(target, ClientMobileTarget::Workspace(id) if id == "ws_1").then_some(*rect)
+            matches!(
+                target,
+                ClientMobileTarget::Workspace { workspace_id, .. } if workspace_id == "ws_1"
+            )
+            .then_some(*rect)
         })
         .expect("workspace hit");
     let focused = state.handle_raw_events(vec![click(workspace_hit)]);
@@ -199,7 +272,11 @@ fn mobile_header_and_switcher_render_released_sections_and_stable_targets() {
         .mobile_targets
         .iter()
         .find_map(|(rect, target)| {
-            matches!(target, ClientMobileTarget::Agent(id) if id == "pane_1").then_some(*rect)
+            matches!(
+                target,
+                ClientMobileTarget::Agent { pane_id, .. } if pane_id == "pane_1"
+            )
+            .then_some(*rect)
         })
         .expect("agent hit");
     let focused = state.handle_raw_events(vec![click(agent_hit)]);
@@ -221,7 +298,14 @@ fn mobile_header_and_switcher_render_released_sections_and_stable_targets() {
         .mobile_targets
         .iter()
         .find_map(|(rect, target)| {
-            matches!(target, ClientMobileTarget::Tab(id) if id == "tab_1").then_some(*rect)
+            matches!(
+                target,
+                ClientMobileTarget::Tab {
+                    endpoint_id,
+                    tab_id,
+                } if endpoint_id.is_local() && tab_id == "tab_1"
+            )
+            .then_some(*rect)
         })
         .expect("tab hit");
     let focused = state.handle_raw_events(vec![click(tab_hit)]);
@@ -534,7 +618,10 @@ fn mobile_switcher_scroll_close_and_width_transition_clear_mobile_hits() {
     assert_eq!(state.navigate_workspace_id.as_deref(), Some("ws_8"));
     assert!(state.mobile_switcher_scroll > 2);
     assert!(state.hits.mobile_targets.iter().any(|(_, target)| {
-        matches!(target, ClientMobileTarget::Workspace(id) if id == "ws_8")
+        matches!(
+            target,
+            ClientMobileTarget::Workspace { workspace_id, .. } if workspace_id == "ws_8"
+        )
     }));
     let close = state.hits.mobile_close;
     state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {

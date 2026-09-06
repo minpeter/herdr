@@ -3,10 +3,7 @@ use super::*;
 impl ClientShellState {
     #[cfg(unix)]
     pub(crate) fn graphics_scope(&self) -> &str {
-        self.snapshot
-            .as_deref()
-            .map(|snapshot| snapshot.boot_id.as_str())
-            .unwrap_or_default()
+        self.graphics.scope()
     }
 
     #[cfg(unix)]

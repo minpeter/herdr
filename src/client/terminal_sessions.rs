@@ -89,7 +89,18 @@ fn connect_terminal_session_stream(
         }
     };
 
-    match do_handshake(&mut stream, cols, rows, 0, 0, false, None, false, false) {
+    match do_handshake(
+        &mut stream,
+        cols,
+        rows,
+        0,
+        0,
+        false,
+        None,
+        false,
+        false,
+        true,
+    ) {
         Ok(handshake) if handshake.encoding == RenderEncoding::TerminalAnsi => {}
         Ok(handshake) => {
             eprintln!(

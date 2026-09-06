@@ -121,6 +121,29 @@ fn set_handshake_recv_timeout(
 pub(super) struct HandshakeResult {
     pub(super) encoding: RenderEncoding,
     pub(super) endpoint_methods: Option<Vec<String>>,
+    pub(super) endpoint_capabilities: Option<Vec<String>>,
+}
+
+pub(crate) fn probe_endpoint_negotiation(
+    stream: &mut LocalStream,
+) -> io::Result<super::endpoint::EndpointNegotiation> {
+    let handshake = do_handshake(
+        stream,
+        80,
+        24,
+        0,
+        0,
+        false,
+        Some(crate::protocol::ClientSurfaceSize { cols: 80, rows: 24 }),
+        false,
+        false,
+        false,
+    )
+    .map_err(io::Error::other)?;
+    Ok(super::endpoint::EndpointNegotiation::new(
+        handshake.endpoint_methods.unwrap_or_default(),
+        handshake.endpoint_capabilities.unwrap_or_default(),
+    ))
 }
 
 /// Performs the client→server handshake.
@@ -138,6 +161,7 @@ pub(super) fn do_handshake(
     shell_surface_size: Option<crate::protocol::ClientSurfaceSize>,
     endpoint_keybindings: bool,
     mouse_capture: bool,
+    surface_active: bool,
 ) -> Result<HandshakeResult, ClientError> {
     stream
         .set_nonblocking(false)
@@ -157,6 +181,7 @@ pub(super) fn do_handshake(
                 && direct_graphics_profile_allowed(),
             endpoint_keybindings,
             mouse_capture,
+            surface_active,
             snapshot_codecs: vec![SNAPSHOT_CODEC_V1.into()],
             surface_codecs: vec![SURFACE_CODEC_V1.into()],
             input_codecs: vec![INPUT_CODEC_V1.into()],
@@ -181,9 +206,14 @@ pub(super) fn do_handshake(
     protocol::write_message(stream, &hello)
         .map_err(|e| ClientError::ConnectionFailed(io::Error::other(e.to_string())))?;
 
+    let read_timeout = if endpoint_shell && !surface_active {
+        REMOTE_HANDSHAKE_READ_TIMEOUT
+    } else {
+        handshake_read_timeout()
+    };
     set_handshake_recv_timeout(
         stream,
-        Some(handshake_read_timeout()),
+        Some(read_timeout),
         "client handshake read timeout unavailable",
     )?;
     let welcome: ServerMessage = protocol::read_message(stream, MAX_FRAME_SIZE)?;
@@ -238,6 +268,7 @@ pub(super) fn do_handshake(
         return Ok(HandshakeResult {
             encoding: RenderEncoding::SemanticFrame,
             endpoint_methods: Some(welcome.methods),
+            endpoint_capabilities: Some(welcome.capabilities),
         });
     }
 
@@ -254,6 +285,7 @@ pub(super) fn do_handshake(
             Ok(HandshakeResult {
                 encoding,
                 endpoint_methods: None,
+                endpoint_capabilities: None,
             })
         }
         _ => Err(ClientError::Protocol(protocol::FramingError::Io(

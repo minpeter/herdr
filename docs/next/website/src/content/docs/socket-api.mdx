@@ -938,8 +938,11 @@ Errors look like this:
 The client-rendered Herdr UI uses a stable endpoint generation for local and SSH
 servers. Client and server builds do not need to match. During connection setup,
 they agree on the core snapshot, screen, input, and blob codecs, and the server advertises
-the API methods it supports. A missing method disables only that action on that
-server and shows a client-local notice; it does not disconnect the UI. Rejected
+the API methods and optional capabilities it supports. Saved SSH federation requires the
+`surface_interest` capability so only the selected machine streams a pane surface and the
+`health_check` capability so a quiet broken connection cannot remain Online indefinitely. A server
+without this lifecycle support stays at Attention until it is explicitly updated. Other missing methods disable
+only those actions and show a client-local notice; they do not disconnect the UI. Rejected
 or timed-out actions are also reported without ending the connection. Servers
 from before endpoint generation 1 need one final update.
 

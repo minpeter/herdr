@@ -1,10 +1,24 @@
 use super::*;
 
+fn checkout_path_preview(root: &str, repo: &str, branch: &str) -> String {
+    // This is an endpoint path, not a path on the machine drawing the dialog.
+    let separator = if !root.starts_with('/') && root.contains('\\') {
+        '\\'
+    } else {
+        '/'
+    };
+    format!(
+        "{}{separator}{repo}{separator}{}",
+        root.trim_end_matches(separator),
+        crate::worktree::branch_to_path_slug(branch)
+    )
+}
+
 impl ClientShellState {
-    fn endpoint_worktree_directory(&self) -> Option<std::path::PathBuf> {
+    fn endpoint_worktree_directory(&self) -> Option<String> {
         self.snapshot
             .as_deref()
-            .map(|snapshot| std::path::PathBuf::from(&snapshot.worktree_directory))
+            .map(|snapshot| snapshot.worktree_directory.clone())
     }
 
     pub(super) fn insert_worktree_overlay_text(&mut self, text: &str) -> bool {
@@ -241,13 +255,8 @@ impl ClientShellState {
         let Some(ClientShellOverlay::WorktreeCreate(create)) = self.overlay.as_mut() else {
             return;
         };
-        create.checkout_path = crate::worktree::default_checkout_path(
-            &worktree_directory,
-            &create.repo_name,
-            &create.branch,
-        )
-        .display()
-        .to_string();
+        create.checkout_path =
+            checkout_path_preview(&worktree_directory, &create.repo_name, &create.branch);
         create.error = None;
     }
 
@@ -270,9 +279,7 @@ impl ClientShellState {
         create.branch = branch.clone();
         create.replace_on_type = false;
         create.checkout_path =
-            crate::worktree::default_checkout_path(&worktree_directory, &create.repo_name, &branch)
-                .display()
-                .to_string();
+            checkout_path_preview(&worktree_directory, &create.repo_name, &branch);
         create.creating = true;
         create.error = None;
         let workspace_id = create.source_workspace_id.clone();
@@ -399,13 +406,8 @@ impl ClientShellState {
                 let Some(worktree_directory) = self.endpoint_worktree_directory() else {
                     return false;
                 };
-                let checkout_path = crate::worktree::default_checkout_path(
-                    &worktree_directory,
-                    &source.repo_name,
-                    &branch,
-                )
-                .display()
-                .to_string();
+                let checkout_path =
+                    checkout_path_preview(&worktree_directory, &source.repo_name, &branch);
                 self.overlay = Some(ClientShellOverlay::WorktreeCreate(
                     ClientWorktreeCreateOverlay {
                         source_workspace_id: workspace_id,
@@ -538,7 +540,7 @@ impl ClientShellState {
                 | PendingEndpointKind::ReloadConfig
                 | PendingEndpointKind::IntegrationList
                 | PendingEndpointKind::IntegrationInstall
-                | PendingEndpointKind::SelectionCopy { .. }
+                | PendingEndpointKind::SelectionCopy
                 | PendingEndpointKind::PaneScroll { .. }
                 | PendingEndpointKind::WordSelection { .. }
                 | PendingEndpointKind::PaneLinkActivate { .. }
@@ -547,5 +549,26 @@ impl ClientShellState {
                 Err(_),
             ) => true,
         }
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::checkout_path_preview;
+
+    #[test]
+    fn endpoint_path_style_is_independent_of_the_client_os() {
+        assert_eq!(
+            checkout_path_preview("/worktrees/", "repo", "feature/a"),
+            "/worktrees/repo/feature-a"
+        );
+        assert_eq!(
+            checkout_path_preview(r"C:\worktrees\", "repo", "feature/a"),
+            r"C:\worktrees\repo\feature-a"
+        );
+        assert_eq!(
+            checkout_path_preview(r"\\server\share", "repo", "feature/a"),
+            r"\\server\share\repo\feature-a"
+        );
     }
 }

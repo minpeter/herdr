@@ -3,16 +3,31 @@ use super::*;
 #[path = "../shell/overlays.rs"]
 mod overlays;
 #[path = "../shell/sidebar.rs"]
-mod sidebar;
+pub(in crate::client::shell) mod sidebar;
 #[path = "../shell/tabs.rs"]
 mod tabs;
 
 pub(super) use super::agent_sidebar::{ordered_agent_pane_ids, render_agent_panel};
-pub(super) use overlays::{
-    client_navigator_rows, render_client_overlay, render_context_menu, render_global_menu,
-};
+pub(super) use super::aggregate_navigation::navigator_rows as client_navigator_rows;
+pub(super) use overlays::{render_client_overlay, render_context_menu, render_global_menu};
 pub(super) use sidebar::{render_collapsed_sidebar, render_sidebar, workspace_entries};
 pub(super) use tabs::{render_tab_bar, tab_bar_status_width};
+
+pub(in crate::client::shell) fn render_sidebar_background(
+    buffer: &mut Buffer,
+    area: Rect,
+    palette: &Palette,
+) {
+    buffer.set_style(area, Style::default().bg(palette.sidebar_bg));
+    let separator_x = area.right().saturating_sub(1);
+    for y in area.y..area.bottom() {
+        if let Some(cell) = buffer.cell_mut((separator_x, y)) {
+            cell.set_symbol("│");
+            cell.set_style(Style::default().fg(palette.surface_dim));
+        }
+    }
+}
+
 pub(super) fn render_mode_bar(
     buffer: &mut Buffer,
     pane_area: Rect,
@@ -196,6 +211,9 @@ pub(super) fn render_mode_bar(
 }
 
 pub(super) struct ShellRenderState<'a> {
+    pub(super) endpoints: &'a [ClientShellEndpoint],
+    pub(super) active_endpoint_id: &'a ClientEndpointId,
+    pub(super) collapsed_endpoints: &'a HashSet<ClientEndpointId>,
     pub(super) collapsed_groups: &'a HashSet<String>,
     pub(super) workspace_scroll: &'a mut usize,
     pub(super) agent_scroll: &'a mut usize,
@@ -228,7 +246,26 @@ pub(super) fn render_shell(
         );
     }
     if layout.sidebar.width > 0 {
-        if state.sidebar_collapsed {
+        if state.endpoints.len() > 1 {
+            if state.sidebar_collapsed {
+                super::endpoint_sidebar::render_collapsed(
+                    buffer,
+                    layout.sidebar,
+                    config,
+                    &mut state,
+                    &mut hits,
+                );
+            } else {
+                super::endpoint_sidebar::render_expanded(
+                    buffer,
+                    layout.sidebar,
+                    Some(snapshot),
+                    config,
+                    &mut state,
+                    &mut hits,
+                );
+            }
+        } else if state.sidebar_collapsed {
             render_collapsed_sidebar(
                 buffer,
                 layout.sidebar,
@@ -267,8 +304,10 @@ pub(super) fn render_shell(
         hits.agent_scrollbar = Rect::default();
         hits.agent_sort_toggle = Rect::default();
         hits.new_workspace = Rect::default();
+        hits.machines.clear();
         hits.workspaces.clear();
         hits.agents.clear();
+        hits.endpoint_agents.clear();
         hits.tab_scroll_left = Rect::default();
         hits.tab_scroll_right = Rect::default();
         hits.new_tab = Rect::default();
@@ -277,7 +316,7 @@ pub(super) fn render_shell(
     hits
 }
 
-fn put_right_text(buffer: &mut Buffer, area: Rect, y: u16, text: &str, style: Style) {
+pub(super) fn put_right_text(buffer: &mut Buffer, area: Rect, y: u16, text: &str, style: Style) {
     let width = display_width(text).min(area.width);
     put_text(
         buffer,

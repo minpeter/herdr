@@ -13,6 +13,7 @@ pub(crate) const MAX_ENDPOINT_REQUEST_ID_BYTES: usize = 128;
 const ENDPOINT_RESPONSE_CHUNK_BYTES: usize = 512 * 1024;
 
 const CLIENT_SHELL_METHODS: &[&str] = &[
+    "client_shell.surface.set",
     "command.invoke",
     "integration.install",
     "integration.list",
@@ -75,6 +76,30 @@ pub(crate) fn error_response(id: String, code: &str, message: impl Into<String>)
     .unwrap_or_else(|_| {
         r#"{"id":"","error":{"code":"serialization_error","message":"failed to serialize endpoint response"}}"#.into()
     })
+}
+
+pub(crate) fn success_message_with_result(
+    boot_id: String,
+    request_id: String,
+    result: crate::api::schema::ResponseResult,
+) -> crate::protocol::ServerMessage {
+    let response = serde_json::to_string(&crate::api::schema::SuccessResponse {
+        id: request_id.clone(),
+        result,
+    })
+    .unwrap_or_else(|_| {
+        error_response(
+            request_id.clone(),
+            "serialization_error",
+            "failed to serialize endpoint response",
+        )
+    });
+    crate::protocol::ServerMessage::ClientShellEndpointResponseChunk {
+        boot_id,
+        request_id,
+        final_chunk: true,
+        data: response.into_bytes(),
+    }
 }
 
 pub(crate) fn error_message(
@@ -312,6 +337,11 @@ mod tests {
 
     #[test]
     fn client_shell_lane_excludes_api_front_door_and_lifecycle_methods() {
+        assert!(supports_client_shell_method(
+            &Method::ClientShellSurfaceSet(crate::api::schema::ClientShellSurfaceSetParams {
+                active: false,
+            })
+        ));
         assert!(supports_client_shell_method(&Method::ServerReloadConfig(
             crate::api::schema::EmptyParams::default(),
         )));

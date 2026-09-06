@@ -2,16 +2,15 @@ use std::path::PathBuf;
 
 use tracing::{info, warn};
 
-use crate::ipc::LocalStream;
 #[cfg(windows)]
 use crate::protocol::ClientInputEvent;
 use crate::protocol::MAX_CLIPBOARD_IMAGE_PAYLOAD;
 use crate::protocol::{ClientClipboardImageTarget, ClientMessage};
 
-use super::{is_remote_client_process, write_to_server, ClientError};
+use super::{write_to_server, ClientError};
 
 pub(super) fn write_remote_image_to_server(
-    stream: &mut LocalStream,
+    stream: &mut impl super::ClientMessageSink,
     target: ClientClipboardImageTarget,
     image: crate::platform::ClipboardImage,
     source: &'static str,
@@ -46,10 +45,6 @@ pub(super) fn write_remote_image_to_server(
 pub(super) fn client_remote_image_paste_key(
     config: &crate::config::Config,
 ) -> Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)> {
-    if !is_remote_client_process() {
-        return None;
-    }
-
     match config.remote_image_paste_key() {
         Ok(key) => key,
         Err(diagnostic) => {
@@ -59,14 +54,25 @@ pub(super) fn client_remote_image_paste_key(
     }
 }
 
+pub(super) fn endpoint_accepts_local_images(
+    remote_client_process: bool,
+    endpoint_id: &super::endpoint::ClientEndpointId,
+    active_surface_available: bool,
+) -> bool {
+    active_surface_available && (remote_client_process || !endpoint_id.is_local())
+}
+
 #[cfg(unix)]
 pub(super) fn should_bridge_clipboard_image_paste(
     data: &[u8],
     is_remote_client: bool,
     remote_image_paste_key: Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
 ) -> bool {
+    if !is_remote_client {
+        return false;
+    }
     if data == b"\x1b[200~\x1b[201~" {
-        return is_remote_client;
+        return true;
     }
 
     let Some(remote_image_paste_key) = remote_image_paste_key else {

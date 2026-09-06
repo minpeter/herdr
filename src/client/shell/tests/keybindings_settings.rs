@@ -196,7 +196,10 @@ fn prefix_endpoint_action_uses_public_api_with_stable_ids() {
 
     assert!(state.handle_input_bytes(&[0x02]).actions.is_empty());
     let create = state.handle_input_bytes(b"c");
-    let [ClientShellAction::Endpoint { boot_id, request }] = &create.actions[..] else {
+    let [ClientShellAction::Endpoint {
+        boot_id, request, ..
+    }] = &create.actions[..]
+    else {
         panic!("expected one endpoint action: {:?}", create.actions);
     };
     assert_eq!(boot_id, "boot-1");

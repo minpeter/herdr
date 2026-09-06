@@ -3086,6 +3086,10 @@ impl PaneRuntime {
         self.terminal.visible_hyperlinks(area)
     }
 
+    pub(crate) fn kitty_graphics_may_have_placements(&self) -> bool {
+        self.terminal.kitty_graphics_may_have_placements()
+    }
+
     pub fn kitty_image_placements_with_data_filter<F>(
         &self,
         needs_data: F,

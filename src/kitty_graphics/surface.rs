@@ -50,6 +50,10 @@ pub(crate) struct ClientState {
 }
 
 impl ClientState {
+    pub(crate) fn scope(&self) -> &str {
+        &self.scope
+    }
+
     pub(crate) fn set_scope(&mut self, scope: &str) {
         if self.scope == scope {
             return;

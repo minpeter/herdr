@@ -295,6 +295,12 @@ pub enum ResponseResult {
         status: crate::config::ConfigReloadStatus,
         diagnostics: Vec<String>,
     },
+    /// Acknowledgement for the client-shell surface interest lease. This method is new on the
+    /// endpoint protocol, so its revision-bearing result can establish an activation floor.
+    ClientShellSurfaceSet {
+        active: bool,
+        projection_revision: u64,
+    },
     Ok {},
 }
 

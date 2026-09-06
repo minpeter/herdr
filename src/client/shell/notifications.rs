@@ -1,3 +1,5 @@
+#[cfg(test)]
+use super::notification_policy::COMPLETION_RECHECK_INTERVAL;
 use super::*;
 use ratatui::{
     style::Color,
@@ -5,7 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
-fn render_mobile_notice_banner(
+pub(super) fn render_mobile_notice_banner(
     buffer: &mut Buffer,
     area: Rect,
     title: &str,
@@ -102,25 +104,7 @@ pub(super) fn render_mobile_notification_banner(
     )
 }
 
-pub(super) fn render_mobile_endpoint_notice_banner(
-    buffer: &mut Buffer,
-    area: Rect,
-    notice: &ClientVisibleEndpointNotice,
-    offset_for_warning: bool,
-    palette: &Palette,
-) -> Rect {
-    render_mobile_notice_banner(
-        buffer,
-        area,
-        &notice.title,
-        Some(&notice.body),
-        palette.red,
-        offset_for_warning,
-        palette,
-    )
-}
-
-fn render_notification_card(
+pub(super) fn render_notification_card(
     buffer: &mut Buffer,
     area: Rect,
     title: &str,
@@ -221,205 +205,13 @@ pub(super) fn render_visible_notification(
     )
 }
 
-pub(super) fn render_endpoint_notice(
-    buffer: &mut Buffer,
-    area: Rect,
-    notice: &ClientVisibleEndpointNotice,
-    top_offset: u16,
-    palette: &Palette,
-) -> Rect {
-    render_notification_card(
-        buffer,
-        area,
-        &notice.title,
-        &notice.body,
-        crate::config::ToastHerdrPosition::TopRight,
-        top_offset,
-        match notice.key.kind {
-            ClientEndpointNoticeKind::Unsupported | ClientEndpointNoticeKind::Rejected => {
-                palette.red
-            }
-            ClientEndpointNoticeKind::Timeout | ClientEndpointNoticeKind::Unavailable => {
-                palette.yellow
-            }
-        },
-        palette,
-    )
-}
-
-impl ClientShellState {
-    pub(super) fn focus_visible_notification(&mut self, outcome: &mut ClientShellInput) {
-        let Some(notification) = self.visible_notification.take() else {
-            return;
-        };
-        outcome.repaint = true;
-        if let Some(pane_id) = notification.event.pane_id {
-            self.push_endpoint_method(
-                crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget { pane_id }),
-                outcome,
-            );
-        }
-    }
-
-    pub(crate) fn receive_notification(
-        &mut self,
-        event: SemanticNotification,
-        now: std::time::Instant,
-    ) -> (Vec<ClientShellNotificationEffect>, bool) {
-        let delay = if event.kind == SemanticNotificationKind::Custom {
-            0
-        } else {
-            self.config.toast_delay_seconds
-        };
-        let deadline = now
-            .checked_add(std::time::Duration::from_secs(delay))
-            .unwrap_or(now);
-        let cleared_visible = event.pane_id.as_deref().is_some_and(|pane_id| {
-            self.visible_notification
-                .as_ref()
-                .is_some_and(|visible| visible.event.pane_id.as_deref() == Some(pane_id))
-        });
-        if let Some(pane_id) = event.pane_id.as_deref() {
-            self.pending_notifications
-                .retain(|pending| pending.event.pane_id.as_deref() != Some(pane_id));
-            if cleared_visible {
-                self.visible_notification = None;
-            }
-        }
-        self.pending_notifications.push(ClientPendingNotification {
-            event,
-            deadline,
-            validate_state: delay > 0,
-        });
-        let (effects, repaint) = self.tick_notifications(now);
-        (effects, repaint || cleared_visible)
-    }
-
-    pub(crate) fn tick_notifications(
-        &mut self,
-        now: std::time::Instant,
-    ) -> (Vec<ClientShellNotificationEffect>, bool) {
-        let mut repaint = false;
-        if self
-            .visible_notification
-            .as_ref()
-            .is_some_and(|visible| now >= visible.deadline)
-        {
-            self.visible_notification = None;
-            repaint = true;
-        }
-        if self
-            .visible_endpoint_notice
-            .as_ref()
-            .is_some_and(|visible| now >= visible.deadline)
-        {
-            self.visible_endpoint_notice = None;
-            repaint = true;
-        }
-
-        let pending = std::mem::take(&mut self.pending_notifications);
-        let mut effects = Vec::new();
-        for pending in pending {
-            if pending.deadline > now {
-                self.pending_notifications.push(pending);
-                continue;
-            }
-            if pending.validate_state && !self.notification_still_current(&pending.event) {
-                continue;
-            }
-            let target_active = self.notification_target_is_active(&pending.event);
-            let suppress_external = target_active && self.outer_focused != Some(false);
-            if let Some(sound) = pending.event.sound {
-                let suppress_sound =
-                    pending.event.kind == SemanticNotificationKind::Finished && suppress_external;
-                if !suppress_sound {
-                    effects.push(ClientShellNotificationEffect::Sound {
-                        sound: match sound {
-                            SemanticNotificationSound::Done => crate::sound::Sound::Done,
-                            SemanticNotificationSound::Request => crate::sound::Sound::Request,
-                        },
-                        agent: pending.event.agent.clone(),
-                    });
-                }
-            }
-
-            match self.config.toast_delivery {
-                crate::config::ToastDelivery::Off => {}
-                crate::config::ToastDelivery::Herdr if !target_active => {
-                    let duration = match pending.event.kind {
-                        SemanticNotificationKind::NeedsAttention => 8,
-                        SemanticNotificationKind::Finished => 5,
-                        SemanticNotificationKind::UpdateInstalled => 3,
-                        SemanticNotificationKind::Custom => 5,
-                    };
-                    self.visible_notification = Some(ClientVisibleNotification {
-                        event: pending.event,
-                        deadline: now + std::time::Duration::from_secs(duration),
-                    });
-                    repaint = true;
-                }
-                crate::config::ToastDelivery::Herdr => {}
-                crate::config::ToastDelivery::Terminal if !suppress_external => {
-                    effects.push(ClientShellNotificationEffect::Terminal {
-                        title: pending.event.title,
-                        body: pending.event.body,
-                    });
-                }
-                crate::config::ToastDelivery::System if !suppress_external => {
-                    effects.push(ClientShellNotificationEffect::System {
-                        title: pending.event.title,
-                        body: pending.event.body,
-                    });
-                }
-                crate::config::ToastDelivery::Terminal | crate::config::ToastDelivery::System => {}
-            }
-        }
-        (effects, repaint)
-    }
-
-    fn notification_target_is_active(&self, event: &SemanticNotification) -> bool {
-        let Some(snapshot) = self.snapshot.as_deref() else {
-            return false;
-        };
-        if let Some(tab_id) = event.tab_id.as_deref() {
-            return snapshot.focused_tab_id.as_deref() == Some(tab_id);
-        }
-        event.workspace_id.as_deref().is_some_and(|workspace_id| {
-            snapshot.focused_workspace_id.as_deref() == Some(workspace_id)
-        })
-    }
-
-    fn notification_still_current(&self, event: &SemanticNotification) -> bool {
-        let Some(pane_id) = event.pane_id.as_deref() else {
-            return true;
-        };
-        let Some(agent) = self.snapshot.as_deref().and_then(|snapshot| {
-            snapshot
-                .agents
-                .iter()
-                .find(|agent| agent.pane_id == pane_id)
-        }) else {
-            return false;
-        };
-        match event.kind {
-            SemanticNotificationKind::NeedsAttention => {
-                agent.agent_status == crate::api::schema::AgentStatus::Blocked
-            }
-            SemanticNotificationKind::Finished => matches!(
-                agent.agent_status,
-                crate::api::schema::AgentStatus::Idle | crate::api::schema::AgentStatus::Done
-            ),
-            SemanticNotificationKind::UpdateInstalled | SemanticNotificationKind::Custom => true,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn notification() -> ClientVisibleNotification {
         ClientVisibleNotification {
+            endpoint_id: ClientEndpointId::Local,
             event: SemanticNotification {
                 kind: SemanticNotificationKind::Custom,
                 title: "notice".into(),
@@ -460,6 +252,205 @@ mod tests {
         assert!(buffer.content[18 * 44..19 * 44]
             .iter()
             .all(|cell| cell.symbol() != "X"));
+    }
+
+    #[test]
+    fn unavailable_notification_target_stays_visible_and_reports_the_machine() {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        state.visible_notification = Some(ClientVisibleNotification {
+            endpoint_id: ClientEndpointId::Local,
+            event: SemanticNotification {
+                kind: SemanticNotificationKind::NeedsAttention,
+                title: "agent needs attention".into(),
+                body: None,
+                sound: None,
+                agent: Some("agent".into()),
+                workspace_id: Some("workspace".into()),
+                tab_id: Some("tab".into()),
+                pane_id: Some("pane".into()),
+                position: None,
+            },
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(5),
+        });
+        let mut outcome = ClientShellInput::default();
+
+        state.focus_visible_notification(&mut outcome);
+
+        assert!(state.visible_notification.is_some());
+        assert!(state
+            .visible_endpoint_notice
+            .as_ref()
+            .is_some_and(|notice| notice.body.contains("Local is unavailable")));
+        assert!(outcome.repaint);
+    }
+
+    #[test]
+    fn immediate_finished_evidence_for_acknowledged_idle_never_toasts_or_sounds() {
+        let mut config = ClientShellConfig::from_config(&Config::default());
+        config.toast_delivery = crate::config::ToastDelivery::Herdr;
+        config.toast_delay_seconds = 0;
+        let mut state = ClientShellState::new(config);
+        let mut snapshot = super::super::tests::snapshot();
+        snapshot.agents.push(crate::protocol::ClientShellAgent {
+            pane_id: "pane_1".into(),
+            workspace_id: "ws_1".into(),
+            tab_id: "tab_1".into(),
+            name: Some("agent".into()),
+            display_agent: None,
+            agent: Some("agent".into()),
+            title: None,
+            terminal_title: None,
+            terminal_title_stripped: None,
+            agent_status: crate::api::schema::AgentStatus::Idle,
+            state_change_seq: 2,
+            state_labels: Vec::new(),
+            tokens: Vec::new(),
+            focused: true,
+        });
+        state.set_snapshot(Box::new(snapshot));
+
+        let (effects, repaint) = state.receive_notification(
+            &ClientEndpointId::Local,
+            SemanticNotification {
+                kind: SemanticNotificationKind::Finished,
+                title: "agent finished".into(),
+                body: None,
+                sound: Some(SemanticNotificationSound::Done),
+                agent: Some("agent".into()),
+                workspace_id: Some("ws_1".into()),
+                tab_id: Some("tab_1".into()),
+                pane_id: Some("pane_1".into()),
+                position: None,
+            },
+            std::time::Instant::now(),
+        );
+
+        assert!(effects.is_empty());
+        assert!(!repaint);
+        assert!(state.visible_notification.is_none());
+    }
+
+    #[test]
+    fn finished_hint_waits_for_the_projected_completion_snapshot() {
+        let mut config = ClientShellConfig::from_config(&Config::default());
+        config.toast_delivery = crate::config::ToastDelivery::Terminal;
+        config.toast_delay_seconds = 0;
+        let mut state = ClientShellState::new(config);
+        let mut snapshot = super::super::tests::snapshot();
+        snapshot.agents.push(crate::protocol::ClientShellAgent {
+            pane_id: "pane_1".into(),
+            workspace_id: "ws_1".into(),
+            tab_id: "tab_1".into(),
+            name: Some("agent".into()),
+            display_agent: None,
+            agent: Some("agent".into()),
+            title: None,
+            terminal_title: None,
+            terminal_title_stripped: None,
+            agent_status: crate::api::schema::AgentStatus::Working,
+            state_change_seq: 1,
+            state_labels: Vec::new(),
+            tokens: Vec::new(),
+            focused: false,
+        });
+        state.set_snapshot(Box::new(snapshot.clone()));
+        let now = std::time::Instant::now();
+        let event = SemanticNotification {
+            kind: SemanticNotificationKind::Finished,
+            title: "agent finished".into(),
+            body: None,
+            sound: None,
+            agent: Some("agent".into()),
+            workspace_id: Some("ws_1".into()),
+            tab_id: Some("background-tab".into()),
+            pane_id: Some("pane_1".into()),
+            position: None,
+        };
+
+        let (effects, _) = state.receive_notification(&ClientEndpointId::Local, event, now);
+        assert!(effects.is_empty());
+        assert_eq!(state.pending_notifications.len(), 1);
+
+        snapshot.revision = snapshot.revision.saturating_add(1);
+        snapshot.agents[0].agent_status = crate::api::schema::AgentStatus::Idle;
+        snapshot.agents[0].state_change_seq = 2;
+        state.set_snapshot(Box::new(snapshot));
+        let (effects, _) = state.tick_notifications(now + COMPLETION_RECHECK_INTERVAL);
+        assert!(matches!(
+            effects.as_slice(),
+            [ClientShellNotificationEffect::Terminal { title, .. }] if title == "agent finished"
+        ));
+        assert!(state.pending_notifications.is_empty());
+    }
+
+    #[test]
+    fn retiring_one_endpoint_preserves_other_endpoint_notifications() {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        let mut local = notification();
+        local.event.title = "local".into();
+        let remote_id = ClientEndpointId::Ssh(
+            crate::client::endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+        );
+        let mut remote = notification();
+        remote.endpoint_id = remote_id.clone();
+        remote.event.title = "remote".into();
+        state.visible_notification = Some(local);
+        state.queued_notifications.push_back(remote);
+
+        state.retire_endpoint_notifications(&ClientEndpointId::Local);
+
+        assert_eq!(
+            state
+                .visible_notification
+                .as_ref()
+                .map(|notification| (&notification.endpoint_id, notification.event.title.as_str())),
+            Some((&remote_id, "remote"))
+        );
+    }
+
+    #[test]
+    fn concurrent_endpoint_notifications_are_queued_in_arrival_order() {
+        let mut config = Config::default();
+        config.ui.toast.delivery = crate::config::ToastDelivery::Herdr;
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+        let now = std::time::Instant::now();
+        for title in ["first", "second"] {
+            state.receive_notification(
+                &ClientEndpointId::Local,
+                SemanticNotification {
+                    kind: SemanticNotificationKind::Custom,
+                    title: title.into(),
+                    body: None,
+                    sound: None,
+                    agent: None,
+                    workspace_id: None,
+                    tab_id: None,
+                    pane_id: Some(title.into()),
+                    position: None,
+                },
+                now,
+            );
+        }
+
+        assert_eq!(
+            state
+                .visible_notification
+                .as_ref()
+                .map(|notification| notification.event.title.as_str()),
+            Some("first")
+        );
+        assert_eq!(state.queued_notifications.len(), 1);
+
+        state.tick_notifications(now + std::time::Duration::from_secs(5));
+
+        assert_eq!(
+            state
+                .visible_notification
+                .as_ref()
+                .map(|notification| notification.event.title.as_str()),
+            Some("second")
+        );
+        assert!(state.queued_notifications.is_empty());
     }
 
     #[test]
