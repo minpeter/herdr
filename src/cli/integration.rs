@@ -1,4 +1,12 @@
 use crate::api::schema::IntegrationTarget;
+use crate::integration::senpi::{self, Brand};
+
+// Deliberately local: IntegrationTarget is append-closed in the v1 API.
+#[derive(Debug, PartialEq, Eq)]
+enum LocalTarget {
+    Shared(IntegrationTarget),
+    Senpi(Brand),
+}
 
 pub(super) fn run_integration_command(args: &[String]) -> std::io::Result<i32> {
     let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
@@ -33,7 +41,7 @@ fn integration_status(args: &[String]) -> std::io::Result<i32> {
 
     if outdated_only {
         crate::integration::print_outdated_update_notice();
-        return Ok(0);
+        return print_local_senpi_statuses(true);
     }
 
     for status in crate::integration::installed_integration_statuses() {
@@ -61,7 +69,37 @@ fn integration_status(args: &[String]) -> std::io::Result<i32> {
         println!("{target}: {state} ({})", status.path.display());
     }
 
-    Ok(0)
+    print_local_senpi_statuses(false)
+}
+
+fn print_local_senpi_statuses(outdated_only: bool) -> std::io::Result<i32> {
+    let mut exit_code = 0;
+    for brand in Brand::ALL {
+        let status = match senpi::status(brand) {
+            Ok(status) => status,
+            Err(err) => {
+                eprintln!("{}: {err}", brand.label());
+                exit_code = 1;
+                continue;
+            }
+        };
+        let state = match status.state {
+            crate::integration::IntegrationStatusKind::NotInstalled => "not installed".to_string(),
+            crate::integration::IntegrationStatusKind::Current => {
+                format!("current (v{})", senpi::VERSION)
+            }
+            crate::integration::IntegrationStatusKind::Outdated => format!(
+                "needs update/repair (v{}; bundled v{}); run `herdr integration install {}`",
+                status.installed_version.unwrap_or(0),
+                senpi::VERSION,
+                brand.label()
+            ),
+        };
+        if !outdated_only || status.state == crate::integration::IntegrationStatusKind::Outdated {
+            println!("{}: {state} ({})", brand.label(), status.path.display());
+        }
+    }
+    Ok(exit_code)
 }
 
 fn integration_install(args: &[String]) -> std::io::Result<i32> {
@@ -69,7 +107,11 @@ fn integration_install(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     };
 
-    match crate::integration::install_target(target) {
+    let result = match target {
+        LocalTarget::Shared(target) => crate::integration::install_target(target),
+        LocalTarget::Senpi(brand) => senpi::install(brand),
+    };
+    match result {
         Ok(messages) => {
             print_integration_messages(messages);
             Ok(0)
@@ -86,7 +128,11 @@ fn integration_uninstall(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     };
 
-    match crate::integration::uninstall_target(target) {
+    let result = match target {
+        LocalTarget::Shared(target) => crate::integration::uninstall_target(target),
+        LocalTarget::Senpi(brand) => senpi::uninstall(brand),
+    };
+    match result {
         Ok(messages) => {
             print_integration_messages(messages);
             Ok(0)
@@ -104,21 +150,27 @@ fn print_integration_messages(messages: Vec<String>) {
     }
 }
 
-fn parse_integration_target(
-    args: &[String],
-    action: &str,
-) -> std::io::Result<Option<IntegrationTarget>> {
+fn parse_integration_target(args: &[String], action: &str) -> std::io::Result<Option<LocalTarget>> {
     let Some(target) = args.first().map(|arg| arg.as_str()) else {
         eprintln!(
-            "usage: herdr integration {action} <pi|omp|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|cursor|mastracode|grok>"
+            "usage: herdr integration {action} <pi|omp|omo|senpi|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|cursor|mastracode|grok>"
         );
         return Ok(None);
     };
     if args.len() != 1 {
         eprintln!(
-            "usage: herdr integration {action} <pi|omp|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|cursor|mastracode|grok>"
+            "usage: herdr integration {action} <pi|omp|omo|senpi|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|cursor|mastracode|grok>"
         );
         return Ok(None);
+    }
+
+    let brand = match target {
+        "omo" => Some(Brand::Omo),
+        "senpi" => Some(Brand::Senpi),
+        _ => None,
+    };
+    if let Some(brand) = brand {
+        return Ok(Some(LocalTarget::Senpi(brand)));
     }
 
     let parsed = match target {
@@ -142,19 +194,20 @@ fn parse_integration_target(
         _ => {
             eprintln!("unknown integration target: {target}");
             eprintln!(
-                "currently supported: pi, omp, claude, codex, copilot, devin, droid, kimi, opencode, kilo, hermes, qodercli, qwen, cursor, mastracode, antigravity-cli, grok"
+                "currently supported: pi, omp, omo, senpi, claude, codex, copilot, devin, droid, kimi, opencode, kilo, hermes, qodercli, qwen, cursor, mastracode, antigravity-cli, grok"
             );
             return Ok(None);
         }
     };
 
-    Ok(Some(parsed))
+    Ok(Some(LocalTarget::Shared(parsed)))
 }
 
 fn print_integration_help() {
     eprintln!("herdr integration commands:");
     eprintln!("  herdr integration install pi");
     eprintln!("  herdr integration install omp");
+    eprintln!("  herdr integration install omo|senpi (local only)");
     eprintln!("  herdr integration install claude");
     eprintln!("  herdr integration install codex");
     eprintln!("  herdr integration install copilot");
@@ -172,6 +225,7 @@ fn print_integration_help() {
     eprintln!("  herdr integration install grok");
     eprintln!("  herdr integration uninstall pi");
     eprintln!("  herdr integration uninstall omp");
+    eprintln!("  herdr integration uninstall omo|senpi (local only)");
     eprintln!("  herdr integration uninstall claude");
     eprintln!("  herdr integration uninstall codex");
     eprintln!("  herdr integration uninstall copilot");
@@ -188,4 +242,45 @@ fn print_integration_help() {
     eprintln!("  herdr integration uninstall antigravity-cli");
     eprintln!("  herdr integration uninstall grok");
     eprintln!("  herdr integration status [--outdated-only]");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_senpi_targets_are_accepted() {
+        for target in ["omo", "senpi"] {
+            for action in ["install", "uninstall"] {
+                assert!(
+                    parse_integration_target(&[target.into()], action)
+                        .unwrap()
+                        .is_some(),
+                    "{action} {target}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn local_senpi_routing_preserves_legacy_targets_and_usage_errors() {
+        for target in IntegrationTarget::ALL {
+            let label = crate::integration::integration_target_label(target);
+            assert_eq!(
+                parse_integration_target(&[label.into()], "install").unwrap(),
+                Some(LocalTarget::Shared(target))
+            );
+        }
+        for target in ["omo", "senpi"] {
+            assert!(
+                parse_integration_target(&[target.into(), "extra".into()], "install")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert!(parse_integration_target(&[], "install").unwrap().is_none());
+        assert!(parse_integration_target(&["unknown".into()], "install")
+            .unwrap()
+            .is_none());
+    }
 }

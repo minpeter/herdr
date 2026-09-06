@@ -6,6 +6,7 @@ mod env;
 mod file_ops;
 mod opencode_config;
 mod registry;
+pub(crate) mod senpi;
 mod targets;
 mod types;
 mod version;

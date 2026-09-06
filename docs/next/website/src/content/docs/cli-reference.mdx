@@ -363,6 +363,8 @@ Use `pane wait-output` for normal commands and servers. Use `agent wait` for cod
 ```bash
 herdr integration install pi
 herdr integration install omp
+herdr integration install omo
+herdr integration install senpi
 herdr integration install claude
 herdr integration install codex
 herdr integration install copilot
@@ -379,6 +381,8 @@ herdr integration install mastracode
 herdr integration install grok
 herdr integration uninstall pi
 herdr integration uninstall omp
+herdr integration uninstall omo
+herdr integration uninstall senpi
 herdr integration uninstall claude
 herdr integration uninstall codex
 herdr integration uninstall copilot
@@ -395,6 +399,8 @@ herdr integration uninstall mastracode
 herdr integration uninstall grok
 herdr integration status [--outdated-only]
 ```
+
+OmO/Senpi targets are local-only; see [path resolution and ownership rules](/docs/integrations/#omo--senpi-local-cli-only). They are not API targets or startup recommendations.
 
 ## Plugins
 

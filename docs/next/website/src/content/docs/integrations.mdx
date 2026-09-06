@@ -127,6 +127,47 @@ Herdr uses `PI_CODING_AGENT_DIR` as the complete agent directory when set. Other
 
 The OMP integration reports `omp` as the agent label, lifecycle state, and native session identity through Herdr's socket API. It does not require native process detection for the `omp` executable, and Herdr can resume an OMP pane with `omp --resume=<session>` after a server restart.
 
+## OmO / Senpi (local CLI only)
+
+```bash
+herdr integration install omo
+herdr integration install senpi
+herdr integration status
+herdr integration uninstall omo
+herdr integration uninstall senpi
+```
+
+These commands install the same Herdr-owned Senpi extension (version `1`) as
+`extensions/herdr-senpi-agent-state.ts`. Native OmO defaults to
+`~/.omo/agent`; standalone Senpi defaults to `~/.senpi/agent`. The agent directory
+must already exist; Herdr creates only the missing extensions directory.
+
+Path resolution follows Senpi's agent-directory lookup from the command's working
+directory, not just the home directory:
+
+- OmO reads `OMO_CODING_AGENT_DIR`, then `SENPI_CODING_AGENT_DIR`, then the legacy
+  `PI_CODING_AGENT_DIR`. Standalone Senpi reads the latter two.
+- The first **defined** variable wins. An explicitly empty value disables lower
+  priority aliases and selects project/default lookup. Overrides are complete
+  agent directories; relative paths are relative to the current working directory,
+  and `~` / `~/` expand to home. Use native filesystem paths, not `file://` URLs.
+- Without a nonempty override, the nearest ancestor with a real `.omo/agent` or
+  `.senpi/agent` directory wins (up to 100 parents). Symlinked project config or
+  agent directories are ignored. The search stops before home, then falls back to
+  the corresponding home directory.
+
+Run install, status, and uninstall from the same project and with the same
+variables used to launch the agent. A directory shared with Pi/OMP is refused;
+configure a separate `OMO_CODING_AGENT_DIR` or `SENPI_CODING_AGENT_DIR` instead.
+Herdr does not replace or remove unrelated files at the install filename, and
+uninstall leaves other extensions and settings untouched. Restart the agent after
+installation. `status --outdated-only` also reports local OmO/Senpi updates.
+
+This packaging is **local CLI only**. The server/API integration list, API
+install/uninstall targets, startup recommendations, and schema-derived shell
+completion targets remain unchanged until a separately versioned API is available.
+No protocol generation or API target enum is extended by these commands.
+
 ## Claude Code
 
 Install the Claude Code hook:
