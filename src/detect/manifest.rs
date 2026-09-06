@@ -1,4 +1,5 @@
 use std::{
+    cell::OnceCell,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock, RwLock},
 };
@@ -10,6 +11,8 @@ use super::{
     agent_label, agent_manifest_id, manifest_update::ManifestVersion, parse_agent_label, Agent,
     AgentDetection, AgentState,
 };
+
+mod senpi_regions;
 
 pub const DEFAULT_KNOWN_AGENT_IDLE_FALLBACK: &str = "default_known_agent_idle_fallback";
 
@@ -200,6 +203,7 @@ struct ManifestGate {
 #[derive(Debug, Clone)]
 struct CompiledRule {
     gate: CompiledGate,
+    senpi_region: Option<senpi_regions::Region>,
 }
 
 #[derive(Debug, Clone)]
@@ -452,9 +456,15 @@ fn evaluate_loaded_manifest(
 ) -> DetectionExplain {
     let mut matched: Option<(&ManifestRule, String)> = None;
     let mut evaluated_rules = Vec::new();
+    let senpi = OnceCell::new();
 
     for (rule, compiled_rule) in loaded.manifest.rules.iter().zip(&loaded.compiled_rules) {
-        let region_text = region(input, &rule.region);
+        let region_text = match compiled_rule.senpi_region {
+            Some(region) => senpi
+                .get_or_init(|| senpi_regions::Regions::parse(input.screen))
+                .get(region),
+            None => region(input, &rule.region),
+        };
         let matched_rule = compiled_rule_matches(compiled_rule, region_text);
         evaluated_rules.push(EvaluatedRule {
             id: rule.id.clone(),
@@ -965,6 +975,17 @@ fn validate_manifest(manifest: &AgentManifest) -> Result<(), String> {
                 rule.id, TOP_NON_EMPTY_LINES_ENGINE_VERSION
             ));
         }
+        if senpi_regions::Region::parse(&rule.region).is_some()
+            && manifest
+                .min_engine_version
+                .is_none_or(|version| version < senpi_regions::ENGINE_VERSION)
+        {
+            return Err(format!(
+                "rule {} uses a Senpi current region but requires min_engine_version {}",
+                rule.id,
+                senpi_regions::ENGINE_VERSION
+            ));
+        }
         validate_rule_gate(rule, &mut complexity)
             .map_err(|err| format!("rule {} has invalid matcher gates: {err}", rule.id))?;
     }
@@ -1119,7 +1140,8 @@ fn validate_region_name(spec: &str) -> Result<(), String> {
         | "osc_progress" => Ok(()),
         _ if region_count(trimmed, "bottom_lines").is_some()
             || region_count(trimmed, "bottom_non_empty_lines").is_some()
-            || top_region_count(trimmed).is_some() =>
+            || top_region_count(trimmed).is_some()
+            || senpi_regions::Region::parse(trimmed).is_some() =>
         {
             Ok(())
         }
@@ -1167,7 +1189,10 @@ fn compile_manifest(manifest: &AgentManifest) -> Result<Vec<CompiledRule>, Strin
         .iter()
         .map(|rule| {
             compile_gate(&manifest_gate_from_rule(rule))
-                .map(|gate| CompiledRule { gate })
+                .map(|gate| CompiledRule {
+                    gate,
+                    senpi_region: senpi_regions::Region::parse(&rule.region),
+                })
                 .map_err(|err| format!("rule {} could not be compiled: {err}", rule.id))
         })
         .collect()

@@ -92,6 +92,37 @@ class AgentDetectionManifestCheckTests(unittest.TestCase):
             bundled_manifests = check.load_manifest_dir(bundled, engine_version=3)
             check.validate_catalog(website, bundled_manifests, engine_version=3)
 
+    def test_staged_manifest_remains_valid_after_engine_advances(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundled, published = staged_grok_dirs(Path(tmp))
+            manifests = check.load_manifest_dir(bundled, engine_version=4)
+            check.validate_catalog(published, manifests, engine_version=4)
+
+            with (published / "grok.toml").open("a") as manifest_file:
+                manifest_file.write("\n# changed digest\n")
+            with self.assertRaisesRegex(check.CheckError, "lower than bundled"):
+                check.validate_catalog(published, manifests, engine_version=4)
+
+    def test_senpi_regions_require_engine_four(self):
+        for region in (
+            "senpi_current_dialog",
+            "senpi_current_status",
+            "senpi_current_btw_panel",
+            "senpi_current_footer",
+        ):
+            with self.subTest(region=region), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "senpi.toml"
+                content = manifest("senpi", "2026.09.05.2").replace(
+                    'contains = ["ready"]',
+                    f'region = "{region}"\ncontains = ["ready"]',
+                )
+                path.write_text(content.replace("min_engine_version = 1", "min_engine_version = 4"))
+                check.validate_manifest(path, engine_version=4)
+
+                path.write_text(content)
+                with self.assertRaisesRegex(check.CheckError, "requires min_engine_version 4"):
+                    check.validate_manifest(path, engine_version=4)
+
     def test_rejects_mutated_staged_published_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundled, website = staged_grok_dirs(Path(tmp))

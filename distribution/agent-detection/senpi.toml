@@ -1,6 +1,6 @@
 id = "senpi"
-version = "2026.09.05.1"
-min_engine_version = 1
+version = "2026.09.05.2"
+min_engine_version = 4
 updated_at = "2026-09-05T00:00:00Z"
 aliases = ["omo", "omo-senpi", "omo-native"]
 
@@ -39,7 +39,7 @@ line_regex = [
 id = "permission_selector_blocked"
 state = "blocked"
 priority = 980
-region = "bottom_non_empty_lines(16)"
+region = "senpi_current_dialog"
 visible_blocker = true
 # Current Senpi replaces the editor with a selector, including a selected arrow,
 # four choices and navigation hints. Retain the legacy prompt rule above.
@@ -50,15 +50,24 @@ line_regex = [
   '^[ \t]*(?:→ )?Allow always[ \t]*$',
   '^[ \t]*(?:→ )?Deny[ \t]*$',
   '^[ \t]*(?:→ )?Deny with feedback[ \t]*$',
-  '^[ \t]*↑↓ navigate[ \t]+[^\n]+ select[ \t]+[^\n]+ cancel[ \t]*$',
 ]
-not = [{ line_regex = ['^[ \t]*❯'] }]
+regex = ['(?m)^[ \t]*↑↓[ \t\n]+navigate[ \t\n]+[^ \t\n]+[ \t\n]+select[ \t\n]+[^ \t\n]+[ \t\n]+cancel[ \t]*$']
+
+[[rules]]
+id = "permission_feedback_blocked"
+state = "blocked"
+priority = 980
+region = "senpi_current_dialog"
+visible_blocker = true
+line_regex = ['^ Feedback[ \t]*$', '^>[^\n]*$']
+regex = ['(?m)^[ \t]*[^ \t\n]+[ \t\n]+submit[ \t\n]+[^ \t\n]+[ \t\n]+cancel[ \t]*$']
 
 [[rules]]
 id = "compacting_context_working"
 state = "working"
-priority = 910
-region = "above_prompt_box"
+# Preserve goal/native attribution when compaction is displaced by widgets.
+priority = 904
+region = "senpi_current_status"
 visible_working = true
 regex = ['(?m)^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (?:Compacting(?: context| before next prompt)?|Auto-compacting|Context overflow detected, compacting)(?:\.\.\.|…) \([^)\n]+ to cancel\)(?:[ \t]+[^\n]*)?(?:\n[^\n]*){0,3}\z']
 
@@ -66,9 +75,9 @@ regex = ['(?m)^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (?:Compacting(?: context| 
 id = "retry_or_branch_summary_working"
 state = "working"
 priority = 910
-region = "above_prompt_box"
+region = "senpi_current_status"
 visible_working = true
-line_regex = ['^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (?:Retrying \([0-9]+/[0-9]+\) in [0-9]+s|Summarizing branch)(?:\.\.\.|…) \([^)\n]+ to cancel\)[ \t]*$']
+regex = ['\A[ \t\n]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (?:Retrying \([0-9]+/[0-9]+\)[ \t\n]+in[ \t\n]+[0-9]+s|Summarizing[ \t\n]+branch)(?:\.\.\.|…)[ \t\n]+\([^)]+[ \t\n]to[ \t\n]+cancel\)[ \t\n]*\z']
 
 [[rules]]
 id = "active_subagent_working"
@@ -82,36 +91,29 @@ line_regex = ['^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ · (?:agent|category):
 id = "detached_eval_working"
 state = "working"
 priority = 904
-region = "after_last_horizontal_rule"
+region = "senpi_current_footer"
 visible_working = true
 # Detached cells are removed from this footer on settlement; transcript cell boxes
 # and passive monitor/loop status text are deliberately not activity evidence.
-line_regex = ['^[ \t]*(?:\([^)\n]*OmO Native\)[ \t]+)?↗ (?:(?:js|py|rb|jl|ruby|julia) · |eval [1-9][0-9]*: )[^·\n]+ \([0-9dhms ]+\)(?:[ \t]+(?:Pursuing goal|[▰▱]|Loop |◉ watching|mem:)[^\n]*)?[ \t]*$']
+line_regex = ['^[ \t]*(?:\([^)\n]*OmO Native\)[ \t]+)?↗ (?:(?:js|py|rb|jl|ruby|julia) · |eval [1-9][0-9]*: )[^\n]+ \([0-9dhms ]+\)(?:[ \t]+(?:Pursuing goal|Goal (?:paused|blocked)|[▰▱]|Loop |◉ watching|mem:)[^\n]*)?[ \t]*$']
+# A completed goal objective can exactly reproduce live-eval + goal bytes.
+# Keep the conservative result for that unresolved information collision.
+not = [{ contains = [' · Goal achieved'] }]
 
 [[rules]]
 id = "btw_answering_working"
 state = "working"
 priority = 904
-region = "above_prompt_box"
+region = "senpi_current_btw_panel"
 visible_working = true
 # Match the live panel's final cancellation row, not an answer quoting that row.
 regex = ['(?m)^[ \t]*btw: [^\n]+\n(?:[^\n]*\n)*[ \t]*answering… \(Esc to cancel\)[ \t]*\n[ \t]*─{3,}[ \t]*\n?[ \t]*\z']
 
 [[rules]]
-id = "compacting_with_todo_working"
-state = "working"
-priority = 904
-region = "above_prompt_box"
-visible_working = true
-# A real Todo widget can push the current compaction line more than three rows
-# above the editor. Never cross another editor border or prompt into history.
-regex = ['(?m)^[ \t]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (?:Compacting(?: context| before next prompt)?|Auto-compacting|Context overflow detected, compacting)(?:\.\.\.|…) \([^)\n]+ to cancel\)[^\n]*(?:\n[ \t]*)+Todo[ \t]*\n(?:[^─❯\n]*\n)*\z']
-
-[[rules]]
 id = "wrapped_interrupt_working"
 state = "working"
 priority = 900
-region = "above_prompt_box"
+region = "senpi_current_status"
 visible_working = true
 regex = ['(?m)^[ \t]*[•◦⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (?:Working|Running [^\n]+)[^\n]*\([^)─❯\n]*(?:\n[ \t]*[^)─❯\n]*){1,3}to interrupt\)[ \t]*$']
 
@@ -136,14 +138,15 @@ state = "working"
 priority = 904
 region = "after_last_horizontal_rule"
 visible_working = true
-# Pair a live/resuming run header with its live node; suspended runs retain ▶ rows.
-regex = ['(?m)^[ \t]*(?:▶ .+ running|· .+ resuming) wave [0-9]+/[0-9]+ [0-9]+/[0-9]+ done, [1-9][0-9]* running(?:, [0-9]+ failed)?[ \t]*\n(?:[ \t]{3,}[^\n]*\n)*[ \t]{3,}▶ [^\n]+ · (?:agent|category):[^\n]+$']
+# Header fields may wrap at word boundaries. Only indented child rows may
+# intervene before the running node: never borrow a node from another parent.
+regex = ['(?m)^[ \t]*(?:▶ [^\n]+[ \t\n]+running|· [^\n]+[ \t\n]+resuming)[ \t\n]+wave[ \t\n]+[0-9]+/[0-9]+[ \t\n]+[0-9]+/[0-9]+[ \t\n]+done,[ \t\n]+[1-9][0-9]*[ \t\n]+running(?:,[ \t\n]+[0-9]+[ \t\n]+failed)?[ \t]*\n(?:[ \t]{3,}[^\n]*\n)*[ \t]{3,}▶ [^\n]+ · (?:agent|category):[^\n]+$']
 
 [[rules]]
 id = "goal_continuation_working"
 state = "working"
 priority = 905
-region = "after_last_horizontal_rule"
+region = "senpi_current_footer"
 visible_working = true
 line_regex = ['^[ \t]*(?:\([^)\n]*OmO Native\)[^\n]*\b)?Pursuing goal(?: \([0-9dhms ]+\))?(?:[ \t]+.*)?$']
 not = [{ contains = ["Goal achieved"] }]
@@ -152,7 +155,7 @@ not = [{ contains = ["Goal achieved"] }]
 id = "interrupt_suffix_working"
 state = "working"
 priority = 900
-region = "above_prompt_box"
+region = "senpi_current_status"
 visible_working = true
 line_regex = ['^[ \t]*[•◦⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ \([^)\n]+ to interrupt\)[ \t]*$']
 
@@ -160,7 +163,7 @@ line_regex = ['^[ \t]*[•◦⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+ \([^)\n]+ to int
 id = "custom_tool_indicator_working"
 state = "working"
 priority = 900
-region = "above_prompt_box"
+region = "senpi_current_status"
 visible_working = true
 line_regex = ['^[ \t]*[•◦●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Running [a-zA-Z0-9_.-]+(?:: [^\n]+)?[ \t]*$']
 
@@ -168,6 +171,6 @@ line_regex = ['^[ \t]*[•◦●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Running [a-zA-Z0
 id = "working_literal"
 state = "working"
 priority = 100
-region = "above_prompt_box"
+region = "senpi_current_status"
 visible_working = true
 line_regex = ['^[ \t]*[•◦●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working(?: \([^)\n]+\)|…|\.\.\.)?[ \t]*$']

@@ -40,6 +40,7 @@ REGION_RE = re.compile(
     r"before_current_prompt_marker|current_prompt_block_marker|after_current_prompt_block_marker|"
     r"prompt_box_body|above_prompt_box|last_non_empty_above_prompt_box|after_last_horizontal_rule|"
     r"osc_title|osc_progress|"
+    r"senpi_current_dialog|senpi_current_status|senpi_current_btw_panel|senpi_current_footer|"
     r"bottom_lines\([1-9][0-9]*\)|bottom_non_empty_lines\([1-9][0-9]*\)|"
     r"top_non_empty_lines\([1-9][0-9]*\))$"
 )
@@ -170,6 +171,11 @@ def validate_manifest(path: Path, engine_version: int) -> dict:
         if region.startswith("top_non_empty_lines(") and min_engine < 3:
             raise CheckError(
                 f"{path}: rule {rule['id']} region {region!r} requires min_engine_version 3"
+            )
+
+        if region.startswith("senpi_current_") and min_engine < 4:
+            raise CheckError(
+                f"{path}: rule {rule['id']} region {region!r} requires min_engine_version 4"
             )
 
     return manifest
@@ -344,7 +350,7 @@ def validate_catalog(
         stages_new_engine_manifest = (
             staged_manifest
             == (bundled_manifest["version"], manifest["version"], published_digest)
-            and bundled_manifest["min_engine_version"] == engine_version
+            and bundled_manifest["min_engine_version"] <= engine_version
             and manifest["min_engine_version"] < bundled_manifest["min_engine_version"]
         )
         if cmp < 0 and not stages_new_engine_manifest:

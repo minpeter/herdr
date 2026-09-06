@@ -183,6 +183,217 @@ fn senpi_pasted_metadata_pursuing_goal_does_not_trigger_working() {
     assert!(!explain.visible_working);
 }
 
+// Reduced from .local/qa/review-fixes/live-red-corrected.json. Use the
+// bundled rules directly: a user's persistent override must not certify a build.
+fn senpi_review_explain(screen: &str) -> DetectionExplain {
+    let manifest = parse_manifest(include_str!("../manifests/senpi.toml")).unwrap();
+    let loaded = loaded_manifest(manifest, ManifestSource::Bundled, None, None, false).unwrap();
+    evaluate_loaded_manifest(
+        Agent::Senpi,
+        DetectionInput {
+            screen,
+            osc_title: "",
+            osc_progress: "",
+        },
+        loaded,
+        false,
+    )
+}
+
+fn senpi_review_screen(above: &str, body: &str, below: &str) -> String {
+    let border = "─".repeat(40);
+    format!("{above}{border}\n{body}\n{border}\n{below}")
+}
+
+#[test]
+fn senpi_review_wrapped_permission_controls_are_blocked() {
+    let screen = senpi_review_screen(
+        "",
+        "\n Permission required: bash\n\n Command: $ printf hello\n\n → Allow once\n   Allow always\n   Deny\n   Deny with feedback\n\n ↑↓ navigate  enter select  esc/ctrl+c\n cancel\n",
+        "fixture-model\n",
+    );
+    let result = senpi_review_explain(&screen);
+    assert_eq!(result.state, AgentState::Blocked);
+    assert!(result.visible_blocker);
+}
+
+#[test]
+fn senpi_review_long_permission_metadata_and_children_are_blocked() {
+    let commands = " printf hello\n".repeat(20);
+    let screen = senpi_review_screen(
+        "",
+        &format!("\n Permission required: bash\n\n Command: $ printf hello\n{commands}\n → Allow once\n   Allow always\n   Deny\n   Deny with feedback\n\n ↑↓ navigate  enter select  esc/ctrl+c cancel\n"),
+        " ⠋ child · agent:qa · running · 1s\nfixture-model\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Blocked);
+}
+
+#[test]
+fn senpi_review_feedback_remains_blocked_while_tool_waits() {
+    let screen = senpi_review_screen(
+        "\n ⠋ Running eval\n",
+        "\n Feedback\n\n>\n\n enter submit  esc/ctrl+c cancel\n",
+        "fixture-model\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Blocked);
+}
+
+#[test]
+fn senpi_review_pasted_internal_border_does_not_expose_editor_text() {
+    let screen = senpi_review_screen(
+        "",
+        "❯ Pasted status:\n  ⠋ Running eval\n  ────────────────────────────────────\n  Explain this output.",
+        "fixture-model\n",
+    );
+    let result = senpi_review_explain(&screen);
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn senpi_review_completed_shell_output_is_not_a_primary_loader() {
+    let shell = senpi_review_screen("", " $ printf retained-output\n\n ⠋ Working\n", "");
+    let screen = senpi_review_screen(&shell, "❯", "fixture-model\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+}
+
+#[test]
+fn senpi_review_wrapped_retry_is_working() {
+    let screen = senpi_review_screen(
+        "\n ⠋ Retrying (1/3) in 60s... (esc to\n cancel)\n",
+        "❯",
+        "fixture-model\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+}
+
+#[test]
+fn senpi_review_wrapped_branch_summary_is_working() {
+    let screen = senpi_review_screen(
+        "\n ⠋ Summarizing branch... (ctrl+x to\n cancel)\n",
+        "❯",
+        "fixture-model\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+}
+
+#[test]
+fn senpi_review_eval_summary_can_contain_middle_dots() {
+    let screen = senpi_review_screen("", "❯", "↗ js · Compile · test (1m)\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+}
+
+#[test]
+fn senpi_review_eval_remains_working_with_paused_or_blocked_goal() {
+    for goal in ["Goal paused (/goal resume)", "Goal blocked: input needed"] {
+        let screen = senpi_review_screen("", "❯", &format!("↗ js · Report (1m) {goal}\n"));
+        assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+    }
+}
+
+#[test]
+fn senpi_review_completed_goal_eval_collision_keeps_conservative_fallback() {
+    // The live-eval + completed-goal and completed-only source formatters emit
+    // these identical bytes. This is a false-positive guard, not a liveness fix.
+    let screen = senpi_review_screen("", "❯", "↗ js · Report (1m) Report · Goal achieved\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+}
+
+#[test]
+fn senpi_review_completed_goal_mimicking_an_eval_stays_idle() {
+    let screen = senpi_review_screen(
+        "",
+        "❯",
+        "(😺 OmO Native) ↗ js · report (1m) · Goal achieved (1m)\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+}
+
+fn senpi_review_btw(status: &str) -> String {
+    senpi_review_screen(
+        "",
+        &format!(" btw: Review progress?\n Answer one\n Answer two\n Answer three\n {status}"),
+        "",
+    )
+}
+
+#[test]
+fn senpi_review_answering_btw_and_todo_work_in_either_order() {
+    let panel = senpi_review_btw("answering… (Esc to cancel)");
+    let todo = " Todo\n QA\n [ ] Check detection\n";
+    for above in [format!("{panel}{todo}"), format!("{todo}{panel}")] {
+        let screen = senpi_review_screen(&above, "❯", "fixture-model\n");
+        assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+    }
+}
+
+#[test]
+fn senpi_review_terminal_btw_does_not_match_quoted_working_or_cancellation() {
+    for terminal in [
+        "(dismisses on next message)",
+        "(dismissed)",
+        "error: unavailable",
+    ] {
+        let panel = senpi_review_btw(&format!(
+            "⠋ Working\n answering… (Esc to cancel)\n {terminal}"
+        ));
+        let screen = senpi_review_screen(
+            &format!("{panel} Todo\n QA\n [ ] Check detection\n"),
+            "❯",
+            "fixture-model\n",
+        );
+        assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+    }
+}
+
+#[test]
+fn senpi_review_compaction_above_retained_btw_is_working() {
+    let panel = senpi_review_btw("(dismisses on next message)");
+    let screen = senpi_review_screen(
+        &format!("  ⠋ Compacting context... (esc to cancel)\n{panel}"),
+        "❯",
+        "fixture-model\n",
+    );
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+}
+
+#[test]
+fn senpi_review_wrapped_dag_header_with_narrow_native_child_is_working() {
+    let screen = senpi_review_screen("", "❯", " ▶ Review pipeline rendering audit\n running wave 1/1 0/1 done, 1 running\n   ▶ Review child · agent:qa · 1m 0s\n ⠋ Review child ·\n agent:qa(xai/grok-4)...\nfixture-model\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);
+}
+
+#[test]
+fn senpi_review_wrapped_dag_suspension_cannot_borrow_a_live_node() {
+    let screen = senpi_review_screen("", "❯", " · Review pipeline rendering audit\n suspended · 1 active wave 1/1 0/1\n done, 1 running\n   ▶ Review child · agent:qa · 1m 0s\n ⠋ Review child ·\n agent:qa(xai/grok-4)...\nfixture-model\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+}
+
+#[test]
+fn senpi_review_dag_header_cannot_borrow_a_node_from_another_run() {
+    let screen = senpi_review_screen("", "❯", " ▶ first running wave 1/1 0/1 done, 1 running\n · second suspended · 1 active wave 1/1 0/1 done, 1 running\n   ▶ Review child · agent:qa · 1m 0s\nfixture-model\n");
+    assert_eq!(senpi_review_explain(&screen).state, AgentState::Idle);
+}
+
+#[test]
+fn senpi_review_regions_require_engine_four() {
+    for name in [
+        "senpi_current_dialog",
+        "senpi_current_status",
+        "senpi_current_btw_panel",
+        "senpi_current_footer",
+    ] {
+        let rules = format!("[[rules]]\nid = \"region\"\nstate = \"working\"\nregion = \"{name}\"\ncontains = [\"ready\"]\n");
+        assert!(
+            parse_manifest(&format!("id = \"senpi\"\nmin_engine_version = 4\n{rules}")).is_ok()
+        );
+        assert!(
+            parse_manifest(&format!("id = \"senpi\"\nmin_engine_version = 3\n{rules}")).is_err()
+        );
+        assert!(parse_manifest(&format!("id = \"senpi\"\n{rules}")).is_err());
+    }
+}
+
 #[test]
 fn rule_semantics_apply_gates_priority_and_line_regex() {
     with_manifest_dirs("rule-semantics", || {
