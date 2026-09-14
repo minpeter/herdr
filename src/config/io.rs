@@ -28,6 +28,9 @@ pub fn app_dir_name() -> &'static str {
 }
 
 pub fn config_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("HERDR_CONFIG_DIR").filter(|dir| !dir.is_empty()) {
+        return PathBuf::from(dir);
+    }
     if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
         return PathBuf::from(dir).join(app_dir_name());
     }
@@ -35,6 +38,9 @@ pub fn config_dir() -> PathBuf {
 }
 
 pub fn state_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("HERDR_STATE_DIR").filter(|dir| !dir.is_empty()) {
+        return PathBuf::from(dir);
+    }
     if let Ok(dir) = std::env::var("XDG_STATE_HOME") {
         return PathBuf::from(dir).join(app_dir_name());
     }
@@ -724,6 +730,56 @@ fn upsert_section_raw(content: &str, section: &str, key: &str, value: &str) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn herdr_directory_overrides_preserve_caller_xdg() {
+        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        // Given distinct private Herdr directories and unset, empty, or custom XDG.
+        let keys = [
+            "HERDR_CONFIG_DIR",
+            "HERDR_STATE_DIR",
+            "XDG_CONFIG_HOME",
+            "XDG_STATE_HOME",
+        ];
+        let previous = keys.map(std::env::var_os);
+        let private_config = std::env::temp_dir().join("private-herdr-config");
+        let private_state = std::env::temp_dir().join("private-herdr-state");
+        let mut observed = Vec::new();
+        for xdg in [None, Some(""), Some("caller-xdg")] {
+            std::env::set_var(keys[0], &private_config);
+            std::env::set_var(keys[1], &private_state);
+            for key in &keys[2..] {
+                match xdg {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+            // When Herdr resolves its directories, it must not rewrite process XDG.
+            observed.push((
+                config_dir(),
+                state_dir(),
+                std::env::var(keys[2]).ok(),
+                std::env::var(keys[3]).ok(),
+            ));
+        }
+        for (key, value) in keys.into_iter().zip(previous) {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        // Then all storage is private, without appending another app directory.
+        for ((config, state, config_xdg, state_xdg), xdg) in
+            observed
+                .into_iter()
+                .zip([None, Some(""), Some("caller-xdg")])
+        {
+            assert_eq!(config, private_config);
+            assert_eq!(state, private_state);
+            assert_eq!(config_xdg.as_deref(), xdg);
+            assert_eq!(state_xdg.as_deref(), xdg);
+        }
+    }
 
     #[test]
     fn upsert_top_level_bool_replaces_existing_value() {
