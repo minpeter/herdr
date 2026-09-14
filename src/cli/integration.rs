@@ -184,6 +184,7 @@ fn print_integration_messages(messages: Vec<String>) {
 /// Integration target accepted by the CLI. Letta is deliberately kept out of
 /// the frozen client endpoint `IntegrationTarget` enum and is handled as an
 /// experimental CLI-only target until the agent registry replaces it.
+#[derive(Debug, PartialEq, Eq)]
 enum IntegrationCommandTarget {
     Builtin(IntegrationTarget),
     Letta,
@@ -312,7 +313,9 @@ mod tests {
             let label = crate::integration::integration_target_label(target);
             assert_eq!(
                 parse_integration_target(&[label.into()], "install").unwrap(),
-                Some(LocalTarget::Shared(target))
+                Some(LocalTarget::Builtin(IntegrationCommandTarget::Builtin(
+                    target
+                )))
             );
         }
         for target in ["omo", "senpi"] {
