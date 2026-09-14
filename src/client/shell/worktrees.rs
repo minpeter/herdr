@@ -213,9 +213,8 @@ impl ClientShellState {
             .is_some_and(|worktree| worktree.is_linked_worktree);
         let kind = match action {
             KeybindAction::NewWorktree | KeybindAction::OpenWorktree if linked => {
-                self.endpoint_error = Some(
-                    "New and open worktree actions start from the repo parent workspace."
-                        .to_owned(),
+                self.set_endpoint_error(
+                    "New and open worktree actions start from the repo parent workspace.",
                 );
                 outcome.repaint = true;
                 return;
@@ -227,8 +226,7 @@ impl ClientShellState {
                 workspace_id: workspace_id.clone(),
             },
             KeybindAction::RemoveWorktree if !linked => {
-                self.endpoint_error =
-                    Some("This workspace is not a Herdr-managed worktree checkout.".to_owned());
+                self.set_endpoint_error("This workspace is not a Herdr-managed worktree checkout.");
                 outcome.repaint = true;
                 return;
             }
@@ -291,7 +289,7 @@ impl ClientShellState {
                 base: Some("HEAD".to_owned()),
                 path: None,
                 label: None,
-                focus: true,
+                focus: false,
                 trust_repository: false,
             }),
             PendingEndpointKind::WorktreeCreate,
@@ -390,6 +388,7 @@ impl ClientShellState {
         &mut self,
         kind: PendingEndpointKind,
         result: Result<crate::api::schema::ResponseResult, ClientShellEndpointError>,
+        outcome: &mut ClientShellInput,
     ) -> bool {
         use crate::api::schema::ResponseResult;
 
@@ -441,7 +440,7 @@ impl ClientShellState {
                     })
                     .collect::<Vec<_>>();
                 if entries.is_empty() {
-                    self.endpoint_error = Some("No Git worktrees found for this repo.".to_owned());
+                    self.set_endpoint_error("No Git worktrees found for this repo.");
                 } else {
                     self.overlay = Some(ClientShellOverlay::WorktreeOpen(
                         ClientWorktreeOpenOverlay {
@@ -476,13 +475,26 @@ impl ClientShellState {
                         },
                     ));
                 } else {
-                    self.endpoint_error =
-                        Some("This workspace is not a Herdr-managed worktree checkout.".to_owned());
+                    self.set_endpoint_error(
+                        "This workspace is not a Herdr-managed worktree checkout.",
+                    );
                 }
                 true
             }
-            (PendingEndpointKind::WorktreeCreate, Ok(ResponseResult::WorktreeCreated { .. }))
-            | (PendingEndpointKind::WorktreeOpen, Ok(ResponseResult::WorktreeOpened { .. }))
+            (
+                PendingEndpointKind::WorktreeCreate,
+                Ok(ResponseResult::WorktreeCreated { tab, .. }),
+            ) => {
+                self.overlay = None;
+                self.push_endpoint_method(
+                    crate::api::schema::Method::TabFocus(crate::api::schema::TabTarget {
+                        tab_id: tab.tab_id,
+                    }),
+                    outcome,
+                );
+                true
+            }
+            (PendingEndpointKind::WorktreeOpen, Ok(ResponseResult::WorktreeOpened { .. }))
             | (
                 PendingEndpointKind::WorktreeRemove { .. },
                 Ok(ResponseResult::WorktreeRemoved { .. }),
@@ -505,7 +517,9 @@ impl ClientShellState {
                 true
             }
             (PendingEndpointKind::WorktreeRemove { forced: false }, Err(error))
-                if error.code.as_deref() == Some("dirty_worktree_requires_force") =>
+                if error.code.as_deref() == Some("dirty_worktree_requires_force")
+                    || (error.code.as_deref() == Some("worktree_remove_failed")
+                        && crate::worktree::is_not_working_tree_remove_error(&error.message)) =>
             {
                 if let Some(ClientShellOverlay::WorktreeRemove(remove)) = self.overlay.as_mut() {
                     remove.removing = false;
@@ -528,8 +542,7 @@ impl ClientShellState {
                 Err(_),
             ) => true,
             (_, Ok(_)) => {
-                self.endpoint_error =
-                    Some("endpoint returned an unexpected worktree result".to_owned());
+                self.set_endpoint_error("endpoint returned an unexpected worktree result");
                 true
             }
             (
@@ -544,6 +557,7 @@ impl ClientShellState {
                 | PendingEndpointKind::PaneScroll { .. }
                 | PendingEndpointKind::WordSelection { .. }
                 | PendingEndpointKind::PaneLinkActivate { .. }
+                | PendingEndpointKind::PaneLinkResolve { .. }
                 | PendingEndpointKind::CopyMotion { .. }
                 | PendingEndpointKind::CopySearch { .. },
                 Err(_),

@@ -62,7 +62,18 @@ fn manual_client_chrome_preferences_round_trip_per_endpoint() {
     state.sidebar_collapsed_manual = true;
     state.collapsed_groups.insert("repo-two".into());
     state.collapsed_groups.insert("repo-one".into());
+    let profile =
+        SavedSshEndpoint::new("Build", "dev@build.example", "agents").expect("saved SSH profile");
+    let remote_id = ClientEndpointId::Ssh(profile.id.clone());
+    state
+        .remote_collapsed_groups
+        .insert(remote_id.clone(), HashSet::from(["/repo".to_owned()]));
     state.persist_chrome_preferences(&mut ClientShellInput::default());
+    let stored = std::fs::read_to_string(&path).expect("stored client chrome preferences");
+    assert!(stored.contains(profile.id.as_str()));
+    assert!(stored.contains("repo-one"));
+    assert!(!stored.contains(&profile.label));
+    assert!(!stored.contains(&profile.target));
 
     let reloaded_config =
         ClientShellConfig::from_config(&Config::default()).with_preferences_path(path.clone());
@@ -77,6 +88,15 @@ fn manual_client_chrome_preferences_round_trip_per_endpoint() {
         reloaded.collapsed_groups,
         HashSet::from(["repo-one".to_string(), "repo-two".to_string()])
     );
+    assert_eq!(
+        reloaded.remote_collapsed_groups.get(&remote_id),
+        Some(&HashSet::from(["/repo".to_owned()]))
+    );
+    let mut reloaded = reloaded;
+    reloaded.persist_chrome_preferences(&mut ClientShellInput::default());
+    let stored_again = std::fs::read_to_string(&path).expect("restored client chrome preferences");
+    assert!(stored_again.contains(profile.id.as_str()));
+    assert!(stored_again.contains("/repo"));
     std::fs::remove_file(path).expect("remove client chrome preferences");
 }
 
@@ -142,6 +162,39 @@ fn tab_bar_renders_endpoint_status_ellipses_and_clamps_to_useful_scroll() {
         .map(|cell| cell.symbol.as_str())
         .collect::<String>();
     assert!(!top.contains("ZOOM · host"));
+}
+
+#[test]
+fn inactive_auto_named_tab_label_does_not_stack_terminal_faint() {
+    let mut projected = snapshot();
+    projected.tabs.push(ClientShellTab {
+        tab_id: "tab_2".into(),
+        workspace_id: "ws_1".into(),
+        number: 2,
+        label: "beta".into(),
+        custom_label: false,
+        zoomed: false,
+        focused: false,
+        agent_status: AgentStatus::Idle,
+    });
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    let frame = state.compose(106, 20).expect("tab bar frame");
+    let rect = state
+        .hits
+        .tabs
+        .iter()
+        .find(|(_, tab_id)| tab_id == "tab_2")
+        .expect("inactive tab hit")
+        .0;
+    let buffer = frame.to_ratatui_buffer().expect("tab bar buffer");
+    let (x, y) = cell_symbol_position(&frame, rect, "beta");
+    let cell = buffer.cell((x, y)).expect("inactive tab cell");
+    assert!(
+        !cell.modifier.contains(Modifier::DIM),
+        "inactive tab label at ({x},{y}) should not stack terminal faint: {cell:?}"
+    );
 }
 
 #[test]

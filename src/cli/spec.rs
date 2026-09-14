@@ -12,6 +12,7 @@ pub(super) fn command() -> Command {
         .disable_version_flag(true)
         .arg(help_flag())
         .arg(option("session", "NAME").help("Use or create a named persistent session"))
+        .arg(option("machine", "LABEL-OR-ID").help("Run an API command on a saved SSH machine"))
         .arg(option("remote", "TARGET").help("Attach through SSH to a remote Herdr server"))
         .arg(
             option("remote-keybindings", "MODE")
@@ -894,10 +895,12 @@ fn integration_target_arg() -> Arg {
 }
 
 fn integration_target_values() -> Vec<&'static str> {
-    crate::api::schema::IntegrationTarget::ALL
+    let mut values: Vec<&'static str> = crate::api::schema::IntegrationTarget::ALL
         .into_iter()
         .map(crate::integration::integration_target_label)
-        .collect()
+        .collect();
+    values.extend_from_slice(crate::integration::EXPERIMENTAL_INTEGRATION_TARGET_LABELS);
+    values
 }
 
 fn id_command(name: &'static str, id: &'static str, about: &'static str) -> Command {
@@ -1120,6 +1123,15 @@ mod tests {
     fn spec_matches_all_integration_targets() {
         let cmd = super::command();
         let install = command_path(&cmd, &["integration", "install"]);
+        let mut expected: Vec<String> = crate::api::schema::IntegrationTarget::ALL
+            .map(crate::integration::integration_target_label)
+            .map(str::to_string)
+            .to_vec();
+        expected.extend(
+            crate::integration::EXPERIMENTAL_INTEGRATION_TARGET_LABELS
+                .iter()
+                .map(|label| (*label).to_string()),
+        );
         assert_eq!(
             argument(install, "target")
                 .get_value_parser()
@@ -1127,9 +1139,7 @@ mod tests {
                 .unwrap()
                 .map(|value| value.get_name().to_string())
                 .collect::<Vec<_>>(),
-            crate::api::schema::IntegrationTarget::ALL
-                .map(crate::integration::integration_target_label)
-                .map(str::to_string)
+            expected
         );
     }
 

@@ -1034,6 +1034,108 @@ fn claude_blocker_with_background_shell_remains_blocked() {
 }
 
 #[test]
+fn claude_bash_prompt_with_dont_ask_again_option_matches_bash_rule() {
+    // Captured from a Bash approval prompt at its resting cursor position. The
+    // "don't ask again" choice pushes No to option 3, so the only cursor-free
+    // option line is one bash_permission_prompt used not to cover, which let
+    // the narrower generic_permission_prompt claim the prompt instead (#2650).
+    let screen = concat!(
+        "────────────────────────────────────────────────────────────────
+",
+        " Bash command
+
+",
+        "   curl -sS -o /tmp/probe.html https://example.com
+",
+        "   Download example.com to /tmp/probe.html
+
+",
+        " This command requires approval
+
+",
+        " Do you want to proceed?
+",
+        " ❯ 1. Yes
+",
+        "   2. Yes, and don't ask again for: curl *
+",
+        "   3. No
+
+",
+        " Esc to cancel · Tab to amend · ctrl+e to explain
+",
+    );
+    let result = osc_explain(Agent::Claude, screen, "", "");
+
+    assert_eq!(result.state, AgentState::Blocked);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("bash_permission_prompt")
+    );
+    assert!(result.visible_blocker);
+}
+
+#[test]
+fn claude_permission_prompt_matches_at_every_cursor_position() {
+    // The selected option carries "❯", so no option branch may assume its line
+    // is cursor-free. Walk the cursor across both option layouts.
+    let layouts: [&[&str]; 2] = [
+        &[" ❯ 1. Yes", "   2. No"],
+        &[
+            " ❯ 1. Yes",
+            "   2. Yes, and don't ask again for: curl *",
+            "   3. No",
+        ],
+    ];
+
+    for layout in layouts {
+        for selected in 0..layout.len() {
+            let options: Vec<String> = layout
+                .iter()
+                .enumerate()
+                .map(|(index, line)| {
+                    let bare = line.trim_start().trim_start_matches('❯').trim_start();
+                    if index == selected {
+                        format!(" ❯ {bare}")
+                    } else {
+                        format!("   {bare}")
+                    }
+                })
+                .collect();
+            let screen = format!(
+                concat!(
+                    "────────────────────────────────────────────────────────────────
+",
+                    " Bash command
+
+",
+                    "   curl -sS https://example.com
+
+",
+                    " Do you want to proceed?
+",
+                    "{}
+
+",
+                    " Esc to cancel · Tab to amend · ctrl+e to explain
+",
+                ),
+                options.join("\n"),
+            );
+            let result = osc_explain(Agent::Claude, &screen, "", "");
+
+            assert_eq!(
+                result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+                Some("bash_permission_prompt"),
+                "{options:?} selected={selected}"
+            );
+            assert_eq!(result.state, AgentState::Blocked, "selected={selected}");
+            assert!(result.visible_blocker, "selected={selected}");
+        }
+    }
+}
+
+#[test]
 fn claude_osc_title_braille_prefix_is_working() {
     // "⠂" is U+2802, in the braille block U+2800-U+28FF
     let result = osc_explain(Agent::Claude, "", "⠂ project", "");
@@ -1385,6 +1487,46 @@ fn codex_weak_blocker_ignores_wrapped_current_prompt_text() {
         result.matched_rule.as_ref().map(|r| r.id.as_str()),
         Some("osc_title_idle")
     );
+}
+
+#[test]
+fn codex_sparkle_prompt_preserves_live_states() {
+    for marker in ["› ", "›⠁", "›⠂", "›⠄", "›⠈", "›⠐", "›⠠", "›⡀", "›⢀"]
+    {
+        let screen = format!("Do you want to proceed? [y/n]\n{marker}unsent draft\n");
+        let result = osc_explain(Agent::Codex, &screen, "project | Ready", "");
+        assert_eq!(result.state, AgentState::Idle, "{marker}");
+
+        let working = format!(
+            "Do you want to proceed? [y/n]\n• Working (4s • esc to interrupt)\n{marker}draft\n"
+        );
+        let result = osc_explain(Agent::Codex, &working, "project", "");
+        assert_eq!(result.state, AgentState::Working, "{marker}");
+
+        let approval = format!("{screen}Press enter to confirm or esc to cancel\n");
+        let result = osc_explain(Agent::Codex, &approval, "project", "");
+        assert_eq!(result.state, AgentState::Blocked, "{marker}");
+        assert!(result.visible_blocker);
+
+        for response_marker in ['•', '■', '✗', '✓'] {
+            let response = format!("{screen}{response_marker} Do you want to proceed? [y/n]\n");
+            let result = osc_explain(Agent::Codex, &response, "project", "");
+            assert_eq!(
+                result.state,
+                AgentState::Blocked,
+                "{marker} {response_marker}"
+            );
+        }
+    }
+}
+
+#[test]
+fn codex_weak_blocker_does_not_ignore_arbitrary_prompt_suffixes() {
+    for line in ["›text", "›⠋draft", "›⠀draft", " ›⠁draft", "quoted ›⠁draft"] {
+        let screen = format!("Do you want to proceed? [y/n]\n{line}\n");
+        let result = osc_explain(Agent::Codex, &screen, "project", "");
+        assert_eq!(result.state, AgentState::Blocked, "{line}");
+    }
 }
 
 #[test]

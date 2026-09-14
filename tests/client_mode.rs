@@ -808,11 +808,18 @@ fn federated_launch_opens_local_directly_while_saved_ssh_is_unavailable() {
                 || { read_output(&output).contains("Local") }
             ));
             let mut input = client._master.as_ref().unwrap().take_writer().unwrap();
-            input
-                .write_all(b"printf 'LOCAL_%s\\n' DIRECT_READY\r")
-                .unwrap();
+            // Input is gated until Local's active surface is ready, and that readiness can lag
+            // the first rendered frame (the unavailable remote must not extend the wait). Retry
+            // the write instead of assuming a single write lands, matching the recovered-Local
+            // path below.
             assert!(wait_until(Duration::from_secs(10), Duration::from_millis(20), || {
-                read_output(&output).contains("LOCAL_DIRECT_READY")
+                if read_output(&output).contains("LOCAL_DIRECT_READY") {
+                    return true;
+                }
+                input
+                    .write_all(b"printf 'LOCAL_%s\\n' DIRECT_READY\r")
+                    .unwrap();
+                false
             }), "Local must accept input without waiting for SSH (remote selected: {select_remote}): {}", read_output(&output));
             let text = read_output(&output);
             assert!(!text.contains("Local: connecting"), "{text}");
@@ -882,9 +889,10 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
     std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_herdr"), bin.join("herdr")).unwrap();
     let quote =
         |path: &std::path::Path| format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
+    let ssh_commands = base.join("ssh-commands");
     fs::write(bin.join("ssh"), format!(
-        "#!/bin/sh\nexport HOME={} XDG_CONFIG_HOME={} XDG_RUNTIME_DIR={} HERDR_SOCKET_PATH={}\nunset HERDR_CLIENT_SOCKET_PATH HERDR_SESSION\nfor arg do last=\"$arg\"; done\nexec /bin/sh -c \"$last\"\n",
-        quote(&base.join("home")), quote(&remote_config), quote(&remote_runtime), quote(&remote_api),
+        "#!/bin/sh\nexport HOME={} XDG_CONFIG_HOME={} XDG_RUNTIME_DIR={} HERDR_SOCKET_PATH={}\nunset HERDR_CLIENT_SOCKET_PATH HERDR_SESSION\nfor arg do last=\"$arg\"; done\nprintf '%s\\n' \"$last\" >> {}\nexec /bin/sh -c \"$last\"\n",
+        quote(&base.join("home")), quote(&remote_config), quote(&remote_runtime), quote(&remote_api), quote(&ssh_commands),
     )).unwrap();
     fs::set_permissions(bin.join("ssh"), fs::Permissions::from_mode(0o700)).unwrap();
     let path = format!(
@@ -906,6 +914,12 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
         }),
         "remote must be usable before Local exists: {}",
         read_output(&output)
+    );
+    assert!(
+        fs::read_to_string(&ssh_commands)
+            .unwrap()
+            .contains("remote-client-bridge --idle-timeout-v1"),
+        "saved machine discovery must opt into the advertised bridge idle timeout"
     );
 
     let mut local = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);

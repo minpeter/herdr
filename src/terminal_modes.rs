@@ -1,37 +1,30 @@
 use std::io::{self, Write};
 
-#[cfg(any(not(windows), test))]
 const DISABLE_HOST_MOUSE_REPORTING_SEQUENCE: &[u8] =
-    b"\x1b[?1006l\x1b[?1016l\x1b[?1015l\x1b[?1005l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
+    b"\x1b[?1006l\x1b[?1016l\x1b[?1015l\x1b[?1005l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?9l";
 
 #[cfg(any(windows, test))]
-const WINDOWS_SSH_MOUSE_REPORTING_ENABLE_SEQUENCE: &[u8] =
+const WINDOWS_MOUSE_REPORTING_ENABLE_SEQUENCE: &[u8] =
     b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h";
 #[cfg(any(windows, test))]
-const WINDOWS_SSH_MOUSE_REPORTING_DISABLE_SEQUENCE: &[u8] =
+const WINDOWS_MOUSE_REPORTING_DISABLE_SEQUENCE: &[u8] =
     b"\x1b[?1016l\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
 
-#[cfg(not(windows))]
 pub(crate) fn clear_host_mouse_reporting<W: Write>(writer: &mut W) -> io::Result<()> {
     writer.write_all(DISABLE_HOST_MOUSE_REPORTING_SEQUENCE)?;
     writer.flush()
 }
 
-#[cfg(windows)]
-pub(crate) fn clear_host_mouse_reporting<W: Write>(_writer: &mut W) -> io::Result<()> {
-    Ok(())
-}
-
 #[cfg(any(windows, test))]
-pub(crate) fn set_windows_ssh_mouse_reporting<W: Write>(
+pub(crate) fn set_windows_mouse_reporting<W: Write>(
     writer: &mut W,
     enabled: bool,
     sgr_pixels: bool,
 ) -> io::Result<()> {
     writer.write_all(if enabled {
-        WINDOWS_SSH_MOUSE_REPORTING_ENABLE_SEQUENCE
+        WINDOWS_MOUSE_REPORTING_ENABLE_SEQUENCE
     } else {
-        WINDOWS_SSH_MOUSE_REPORTING_DISABLE_SEQUENCE
+        WINDOWS_MOUSE_REPORTING_DISABLE_SEQUENCE
     })?;
     if enabled {
         writer.write_all(if sgr_pixels {
@@ -182,9 +175,11 @@ mod tests {
 
     #[test]
     fn clears_all_known_host_mouse_modes() {
-        let sequence = std::str::from_utf8(DISABLE_HOST_MOUSE_REPORTING_SEQUENCE).unwrap();
+        let mut output = Vec::new();
+        clear_host_mouse_reporting(&mut output).unwrap();
+        let sequence = std::str::from_utf8(&output).unwrap();
 
-        for mode in ["1000", "1002", "1003", "1005", "1006", "1015", "1016"] {
+        for mode in ["9", "1000", "1002", "1003", "1005", "1006", "1015", "1016"] {
             assert!(
                 sequence.contains(&format!("\x1b[?{mode}l")),
                 "missing mouse mode {mode}"
@@ -193,12 +188,12 @@ mod tests {
     }
 
     #[test]
-    fn windows_ssh_mouse_reporting_setup_and_teardown_request_required_modes() {
+    fn windows_mouse_reporting_setup_and_teardown_request_required_modes() {
         let mut output = Vec::new();
 
-        set_windows_ssh_mouse_reporting(&mut output, true, true).unwrap();
-        set_windows_ssh_mouse_reporting(&mut output, true, false).unwrap();
-        set_windows_ssh_mouse_reporting(&mut output, false, false).unwrap();
+        set_windows_mouse_reporting(&mut output, true, true).unwrap();
+        set_windows_mouse_reporting(&mut output, true, false).unwrap();
+        set_windows_mouse_reporting(&mut output, false, false).unwrap();
 
         assert_eq!(
             output,
