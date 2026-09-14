@@ -610,7 +610,7 @@ fn pane_command() -> Command {
                         .required_unless_present("match")
                         .help("Match a Rust regular expression"),
                 )
-                .arg(read_source_option(false))
+                .arg(read_source_option(true))
                 .arg(option("lines", "N").help("Restrict the searched snapshot to N lines"))
                 .arg(option("timeout", "MS").help("Fail after this many milliseconds"))
                 .arg(flag("raw").help("Keep ANSI escape sequences while matching"))

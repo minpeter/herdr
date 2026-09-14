@@ -668,8 +668,31 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test(flavor = "current_thread")]
     async fn reload_aborts_an_in_flight_command_task_and_its_descendants() {
+        use std::os::unix::ffi::OsStrExt;
+
         let descendant_started = unique_temp_path("descendant-started");
         let survived = unique_temp_path("survived");
+        let descendant_started_path =
+            std::ffi::CString::new(descendant_started.as_os_str().as_bytes())
+                .expect("temporary path contains no NUL bytes");
+        assert_eq!(
+            unsafe { libc::mkfifo(descendant_started_path.as_ptr(), 0o600) },
+            0,
+            "create descendant-started FIFO"
+        );
+        let started_reader = tokio::task::spawn_blocking({
+            let descendant_started = descendant_started.clone();
+            move || {
+                use std::io::Read;
+
+                let mut marker = String::new();
+                std::fs::File::open(descendant_started)
+                    .expect("open descendant-started FIFO")
+                    .read_to_string(&mut marker)
+                    .expect("read descendant-started FIFO");
+                marker
+            }
+        });
         let command = format!(
             "(printf descendant-started > {}; sleep 0.3; printf survived > {}) & wait",
             descendant_started.display(),
@@ -685,16 +708,11 @@ mod tests {
             " ",
         );
         app.handle_tab_bar_status_tasks(std::time::Instant::now());
-        for _ in 0..50 {
-            if descendant_started.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert!(
-            descendant_started.exists(),
-            "status command descendant did not start"
-        );
+        let marker = tokio::time::timeout(Duration::from_secs(3), started_reader)
+            .await
+            .expect("status command descendant did not start")
+            .expect("descendant-started reader task panicked");
+        assert_eq!(marker, "descendant-started");
 
         app.configure_tab_bar_status(
             &[TabBarRightEntryConfig::Text {

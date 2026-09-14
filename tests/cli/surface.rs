@@ -349,6 +349,35 @@ fn subcommand_help_explains_automation_semantics_without_a_server() {
 }
 
 #[test]
+fn pane_read_surfaces_all_supported_snapshot_sources_in_help() {
+    for args in [
+        &["pane", "read", "--help"][..],
+        &["pane", "wait-output", "--help"][..],
+        &["agent", "read", "--help"][..],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_herdr"))
+            .args(args)
+            .env_remove("HERDR_SOCKET_PATH")
+            .env_remove("HERDR_CLIENT_SOCKET_PATH")
+            .env_remove("HERDR_ENV")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "herdr {} failed: stderr={}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("detection"),
+            "herdr {} help did not document detection: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}
+
+#[test]
 fn removed_wait_and_agent_send_commands_are_rejected() {
     let wait = Command::new(env!("CARGO_BIN_EXE_herdr"))
         .args(["wait", "output", "w1:p1", "--match", "ready"])

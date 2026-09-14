@@ -278,6 +278,31 @@ fn senpi_review_wrapped_branch_summary_is_working() {
 }
 
 #[test]
+fn senpi_beta_six_inline_working_bar_is_working() {
+    let screen = "── • Working (7s • esc to interrupt) ─────────────────────────────\n❯\n────────────────────────────────────────────────────────────────────\n/var/tmp • 23K/1M (2.3%) (auto)\n";
+
+    let result = senpi_review_explain(screen);
+
+    assert_eq!(result.state, AgentState::Working);
+    assert!(result.visible_working);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("beta_six_inline_working_bar")
+    );
+}
+
+#[test]
+fn senpi_malformed_inline_working_bar_stays_idle() {
+    let screen = "── • Working (7s • esc to interrupt) ─ stale ──\n❯\n────────────────────────────────────────────────────────────────────\n/var/tmp • 23K/1M (2.3%) (auto)\n";
+
+    let result = senpi_review_explain(screen);
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert!(!result.visible_working);
+    assert!(result.matched_rule.is_none());
+}
+
+#[test]
 fn senpi_review_eval_summary_can_contain_middle_dots() {
     let screen = senpi_review_screen("", "❯", "↗ js · Compile · test (1m)\n");
     assert_eq!(senpi_review_explain(&screen).state, AgentState::Working);

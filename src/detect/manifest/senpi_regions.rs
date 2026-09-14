@@ -46,6 +46,22 @@ impl<'a> Regions<'a> {
             return Self::dock(&screen[..prompt.start]);
         };
         let Some((top, top_shape)) = borders.next() else {
+            if let Some(status) =
+                lines_rev(&screen[..bottom.start]).find(|line| inline_working_bar_line(line.text))
+            {
+                let body = &screen[status.end..bottom.start];
+                if body.lines().any(prompt_line) {
+                    return Self {
+                        status: &screen[status.start..status.end],
+                        footer: screen[bottom.end..]
+                            .lines()
+                            .rev()
+                            .find(|line| !line.trim().is_empty())
+                            .unwrap_or(""),
+                        ..Self::default()
+                    };
+                }
+            }
             return Self::default();
         };
         if top_shape.width != bottom_shape.width || bottom_shape.scrolled_up {
@@ -141,7 +157,7 @@ impl<'a> Regions<'a> {
                 block = DockBlock::Auxiliary;
                 continue;
             }
-            if spinner_line(trimmed) {
+            if spinner_line(trimmed) || inline_working_bar_line(trimmed) {
                 status_start = line.start;
                 result.status = &prefix[status_start..line.end];
                 block = DockBlock::Primary {
@@ -224,6 +240,22 @@ fn spinner_line(line: &str) -> bool {
                 | '⠏'
         )
     ) && chars.next() == Some(' ')
+}
+
+fn inline_working_bar_line(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("── ") else {
+        return false;
+    };
+    let Some(rest) = rest
+        .strip_prefix("• Working (")
+        .or_else(|| rest.strip_prefix("◦ Working ("))
+    else {
+        return false;
+    };
+    let Some((_, suffix)) = rest.rsplit_once(")") else {
+        return false;
+    };
+    suffix.starts_with(" ──") && suffix[1..].chars().all(|ch| ch == '─')
 }
 
 fn prompt_line(line: &str) -> bool {
@@ -311,6 +343,15 @@ mod tests {
     }
 
     #[test]
+    fn inline_working_bar_starts_status_region() {
+        let screen = "── • Working (7s • esc to interrupt) ──\n──────────\n❯\n──────────\n";
+        assert_eq!(
+            Regions::parse(screen).get(Region::Status),
+            "── • Working (7s • esc to interrupt) ──\n"
+        );
+    }
+
+    #[test]
     fn scrolled_editor_cannot_be_a_permission_dialog() {
         let screen = "─── ↑ 1 more ───────\n  Permission required: bash\n  → Allow once\n────────────────────\nfooter\n";
         let parsed = Regions::parse(screen);
@@ -351,5 +392,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn inline_working_bar_starts_status_region_before_single_border() {
+        let screen = "── • Working (7s • esc to interrupt) ───────────────────────\n❯\n────────────────────────────────────────────────────────────\nfooter\n";
+        let parsed = Regions::parse(screen);
+
+        assert_eq!(
+            parsed.get(Region::Status).trim_end(),
+            "── • Working (7s • esc to interrupt) ───────────────────────"
+        );
+        assert_eq!(parsed.get(Region::Footer), "footer");
     }
 }

@@ -1,7 +1,7 @@
 id = "senpi"
-version = "2026.09.05.2"
+version = "2026.09.05.3"
 min_engine_version = 4
-updated_at = "2026-09-05T00:00:00Z"
+updated_at = "2026-09-14T00:00:00Z"
 aliases = ["omo", "omo-senpi", "omo-native"]
 
 # Senpi powers the OmO Native coding-agent CLIs: npm @code-yeongyu/senpi
@@ -174,3 +174,11 @@ priority = 100
 region = "senpi_current_status"
 visible_working = true
 line_regex = ['^[ \t]*[•◦●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working(?: \([^)\n]+\)|…|\.\.\.)?[ \t]*$']
+
+[[rules]]
+id = "beta_six_inline_working_bar"
+state = "working"
+priority = 900
+region = "senpi_current_status"
+visible_working = true
+line_regex = ['^[ \t]*── [•◦] Working \([^\n]+\)[ \t]*─+[ \t]*$']
